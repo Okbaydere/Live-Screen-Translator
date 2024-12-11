@@ -1,9 +1,16 @@
 # Live-Screen-Translator
 Real-time screen text translator with OCR. Capture and translate text from any area of your screen instantly.
-=======
-# Screen Text Translator
 
-Real-time screen text translation tool that can capture and translate text from any area of your screen using multiple OCR and translation engines.
+## 📸 Screenshots
+
+### Main Application Window
+![Main Window](screenshots/main_window.png)
+
+### Translation in Action
+![Translation Demo](screenshots/translation_demo.png)
+
+### Translation History
+![History Window](screenshots/history_window.png)
 
 ## 🌟 Features
 
