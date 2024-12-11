@@ -31,8 +31,12 @@ class TranslationHistory:
 
     def _save_to_file(self):
         """Actual file writing operation"""
-        with open(self.history_file, 'w', encoding='utf-8') as f:
-            json.dump(self.history, f, ensure_ascii=False, indent=2)
+        try:
+            with open(self.history_file, 'w', encoding='utf-8') as f:
+                json_str = json.dumps(self.history, ensure_ascii=False, indent=2)
+                f.write(json_str)
+        except Exception as e:
+            print(f"Error saving history: {e}")
 
     async def add_entry(self, source_text: str, translated_text: str, ocr_engine: str,
                        translation_engine: str, source_lang: str, target_lang: str):
@@ -56,6 +60,10 @@ class TranslationHistory:
     def get_history(self, limit: int = None) -> List[Dict]:
         """Retrieve history records"""
         return self.history[:limit] if limit else self.history
+
+    def save_history(self):
+        """Synchronous version of save history for direct calls"""
+        self._save_to_file()
 
     def clear_history(self):
         """Clear history"""

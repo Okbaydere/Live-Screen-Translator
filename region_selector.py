@@ -8,8 +8,8 @@ import traceback
 if platform.system() == "Windows":
     try:
         ctypes.windll.shcore.SetProcessDpiAwareness(1)
-    except Exception as e:
-        logging.warning(f"Failed to set DPI awareness: {e}")
+    except Exception as dpi_error:
+        logging.warning(f"Failed to set DPI awareness: {dpi_error}")
 
 class RegionSelector:
     def __init__(self):
@@ -78,8 +78,8 @@ class RegionSelector:
                 outline='red',
                 width=2
             )
-        except Exception as e:
-            logging.error(f"Error in on_press: {e}")
+        except Exception as press_error:
+            logging.error(f"Error in on_press: {press_error}")
             logging.error(traceback.format_exc())
 
     def on_drag(self, event):
@@ -91,8 +91,8 @@ class RegionSelector:
                     self.start_x, self.start_y,
                     event.x, event.y
                 )
-        except Exception as e:
-            logging.error(f"Error in on_drag: {e}")
+        except Exception as drag_error:
+            logging.error(f"Error in on_drag: {drag_error}")
             logging.error(traceback.format_exc())
 
     def on_release(self, event):
@@ -120,11 +120,11 @@ class RegionSelector:
                 self.root.destroy()
             else:
                 logging.warning("No valid starting coordinates found")
-        except Exception as e:
-            logging.error(f"Error in on_release: {e}")
+        except Exception as release_error:
+            logging.error(f"Error in on_release: {release_error}")
             logging.error(traceback.format_exc())
 
-    def on_escape(self, event):
+    def on_escape(self, _event):
         # Cancel selection
         logging.info("Region selection cancelled")
         self.selected_region = None
@@ -140,7 +140,7 @@ class RegionSelector:
             self.root.wait_window()
 
             return self.selected_region
-        except Exception as e:
-            logging.error(f"Error in get_region: {e}")
+        except Exception as region_error:
+            logging.error(f"Error in get_region: {region_error}")
             logging.error(traceback.format_exc())
             return None

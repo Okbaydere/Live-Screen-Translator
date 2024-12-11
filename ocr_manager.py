@@ -5,7 +5,6 @@ import pytesseract
 import easyocr
 import torch
 import winocr
-import asyncio
 from PIL import Image
 import time
 from dotenv import load_dotenv

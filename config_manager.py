@@ -53,9 +53,13 @@ class ConfigManager:
 
     def save_config(self):
         """Save the current configuration to a JSON file."""
-        with open(self.config_file, 'w') as file:
-            json.dump(self.config, file, indent=4)
-            logging.info(f"Configuration saved to {self.config_file}")
+        try:
+            with open(self.config_file, 'w', encoding='utf-8') as file:
+                json_str = json.dumps(self.config, indent=4)
+                file.write(json_str)
+                logging.info(f"Configuration saved to {self.config_file}")
+        except Exception as save_error:
+            logging.error(f"Error saving configuration: {save_error}")
 
     def update_config(self, section, key, value):
         if section in self.config:

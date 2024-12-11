@@ -31,6 +31,11 @@ class ScreenTranslator:
         self.translation_window = None
         self.translation_history = TranslationHistory()
         self.history_window = None
+        self.opacity_value_label = None
+        self.opacity_slider = None
+        self.translated_text = None
+        self.region_status = None
+        self.start_btn = None
 
         # Variables
         self.source_lang = tk.StringVar(value="auto")
@@ -91,7 +96,7 @@ class ScreenTranslator:
     def _register_local_shortcuts(self):
         """Register local (in-app) shortcuts"""
         for shortcut, (_, command) in self.shortcuts.items():
-            self.root.bind_all(shortcut, lambda e, cmd=command: cmd())
+            self.root.bind_all(shortcut, lambda event, cmd=command: cmd())
 
     def _register_global_shortcuts(self):
         """Register global shortcuts"""
@@ -104,19 +109,20 @@ class ScreenTranslator:
             try:
                 keyboard.add_hotkey(hotkey, command)
                 self.global_hotkeys[shortcut] = hotkey
-            except Exception as e:
-                logging.error(f"Failed to register global hotkey {hotkey}: {e}")
+            except Exception as reg_error:
+                logging.error(f"Failed to register global hotkey {hotkey}: {reg_error}")
 
     def _unregister_global_shortcuts(self):
         """Unregister global shortcuts"""
         for hotkey in self.global_hotkeys.values():
             try:
                 keyboard.remove_hotkey(hotkey)
-            except Exception as e:
-                logging.error(f"Failed to unregister global hotkey {hotkey}: {e}")
+            except Exception as unreg_error:
+                logging.error(f"Failed to unregister global hotkey {hotkey}: {unreg_error}")
         self.global_hotkeys.clear()
 
-    def _convert_shortcut_format(self, shortcut):
+    @staticmethod
+    def _convert_shortcut_format(shortcut):
         """Convert Tkinter shortcut format to keyboard module format"""
         # '<Control-space>' -> 'ctrl+space'
         shortcut = shortcut.lower()
@@ -446,7 +452,8 @@ class ScreenTranslator:
         )
         history_btn.grid(row=3, column=0, pady=(10, 30), padx=30, sticky="ew")
 
-    def update_button(self, button, text, fg_color, hover_color):
+    @staticmethod
+    def update_button(button, text, fg_color, hover_color):
         """Update button text and colors."""
         button.configure(text=text, fg_color=fg_color, hover_color=hover_color)
 
@@ -528,7 +535,7 @@ class ScreenTranslator:
             )
             self.error_count = 0  # Reset error counter on successful operation
             return result
-        except Exception as e:
+        except Exception as ocr_error:
             current_time = time.time()
             
             # Check error cooldown period
@@ -539,21 +546,70 @@ class ScreenTranslator:
             self.last_error_time = current_time
             
             if self.error_count >= self.max_errors:
-                self.root.after(0, self._show_error_dialog, str(e))
+                self.root.after(0, self._show_error_dialog, str(ocr_error))
                 raise Exception("Maximum error limit reached")
             
-            logging.warning(f"OCR error (attempt {self.error_count}): {e}")
+            logging.warning(f"OCR error (attempt {self.error_count}): {ocr_error}")
             return ""
 
     def _show_error_dialog(self, error_message):
-        dialog = ctk.CTkDialog(
-            self.root,
-            title="Error",
+        """Show a custom error dialog with retry/stop options"""
+        dialog = ctk.CTkToplevel(self.root)
+        dialog.title("Error")
+        dialog.geometry("400x200")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        # Center the dialog on screen
+        dialog.update_idletasks()
+        x = self.root.winfo_x() + (self.root.winfo_width() - dialog.winfo_width()) // 2
+        y = self.root.winfo_y() + (self.root.winfo_height() - dialog.winfo_height()) // 2
+        dialog.geometry(f"+{x}+{y}")
+        
+        # Message
+        message_label = ctk.CTkLabel(
+            dialog,
             text=f"An error occurred:\n{error_message}\n\nWould you like to retry?",
-            button_1_text="Retry",
-            button_2_text="Stop"
+            wraplength=350,
+            justify="center"
         )
-        if dialog.get() == "Retry":
+        message_label.pack(pady=20)
+        
+        # Button frame
+        button_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        button_frame.pack(pady=20)
+        
+        result = {"should_retry": False}
+        
+        def on_retry():
+            result["should_retry"] = True
+            dialog.destroy()
+            
+        def on_stop():
+            result["should_retry"] = False
+            dialog.destroy()
+        
+        # Buttons
+        retry_btn = ctk.CTkButton(
+            button_frame,
+            text="Retry",
+            command=on_retry,
+            width=100
+        )
+        retry_btn.pack(side="left", padx=10)
+        
+        stop_btn = ctk.CTkButton(
+            button_frame,
+            text="Stop",
+            command=on_stop,
+            width=100
+        )
+        stop_btn.pack(side="left", padx=10)
+        
+        # Wait for dialog to close
+        dialog.wait_window()
+        
+        if result["should_retry"]:
             self.error_count = 0
             self.start_translation()
         else:
@@ -657,11 +713,6 @@ class ScreenTranslator:
             self.root.clipboard_clear()
             self.root.clipboard_append(translation) 
             messagebox.showinfo("Copied", "Translation copied to clipboard!")
-
-    def change_theme(self, new_theme=None):
-        """Change theme function"""
-        theme = new_theme or self.current_theme.get()
-        ctk.set_appearance_mode(theme)
 
     def change_translation_engine(self, engine_name):
         """Change the translation engine"""
@@ -770,58 +821,6 @@ class ScreenTranslator:
             self.translation_history.clear_history()
             if self.history_window:
                 self.history_window.destroy()
-
-    def update_history_display(self):
-        """Update history records"""
-        # First clear existing content
-        for widget in self.history_scroll.winfo_children():
-            widget.destroy()
-
-        # Get history records
-        history = self.translation_history.get_history()
-
-        # Create a card for each record
-        for entry in history:
-            # Card frame
-            card = ctk.CTkFrame(self.history_scroll, corner_radius=10)
-            card.pack(fill="x", padx=5, pady=3)
-            card.grid_columnconfigure(1, weight=1)
-
-            # Time
-            time_str = datetime.fromisoformat(entry['timestamp']).strftime("%H:%M:%S")
-            ctk.CTkLabel(
-                card,
-                text=time_str,
-                font=("Helvetica", 10),
-                text_color=("gray50", "gray70")
-            ).grid(row=0, column=0, padx=5, pady=2, sticky="w")
-
-            # OCR and Translation Engine
-            engine_info = f"{entry['ocr_engine']} → {entry['translation_engine']}"
-            ctk.CTkLabel(
-                card,
-                text=engine_info,
-                font=("Helvetica", 9),
-                text_color=("gray50", "gray70")
-            ).grid(row=0, column=1, padx=5, pady=2, sticky="e")
-
-            # Source text
-            ctk.CTkLabel(
-                card,
-                text=entry['source_text'],
-                font=("Helvetica", 11),
-                wraplength=200,
-                justify="left"
-            ).grid(row=1, column=0, columnspan=2, padx=5, pady=(0,2), sticky="w")
-
-            # Translation
-            ctk.CTkLabel(
-                card,
-                text=entry['translated_text'],
-                font=("Helvetica", 11, "bold"),
-                wraplength=200,
-                justify="left"
-            ).grid(row=2, column=0, columnspan=2, padx=5, pady=(0,5), sticky="w")
 
 
 if __name__ == "__main__":

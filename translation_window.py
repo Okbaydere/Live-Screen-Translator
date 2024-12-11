@@ -7,6 +7,12 @@ class FlexibleTranslationWindow(ctk.CTkToplevel):
         
         self.config_manager = config_manager
         
+        # Initialize position tracking attributes
+        self.x = 0
+        self.y = 0
+        self.x_win = 0
+        self.y_win = 0
+        
         # Window setup
         self.title("Translation")
         self.geometry("400x200")
