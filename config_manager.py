@@ -34,7 +34,7 @@ class ConfigManager:
             with open(self.config_file, 'r', encoding='utf-8') as file:
                 try:
                     loaded_config = json.load(file)
-                    # Varsayılan ayarları yüklenmiş ayarlarla birleştir
+                    # Merge default settings with loaded settings
                     return self._merge_configs(self.default_config, loaded_config)
                 except json.JSONDecodeError as e:
                     logging.error(f"Error decoding JSON config: {e}")
@@ -42,7 +42,7 @@ class ConfigManager:
         return self.default_config.copy()
 
     def _merge_configs(self, default, loaded):
-        """Varsayılan ve yüklenmiş ayarları recursive olarak birleştir"""
+        """Recursively merge default and loaded settings"""
         merged = default.copy()
         for key, value in loaded.items():
             if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):

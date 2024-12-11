@@ -17,17 +17,17 @@ class FlexibleTranslationWindow(ctk.CTkToplevel):
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(0, weight=1)
         
-        # Ana frame oluştur (sürüklenebilir alan)
+        # Create main frame (draggable area)
         self.drag_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.drag_frame.grid(row=0, column=0, sticky="nsew")
         self.drag_frame.grid_columnconfigure(0, weight=1)
-        self.drag_frame.grid_rowconfigure(1, weight=1)  # Text widget'a ağırlık ver
+        self.drag_frame.grid_rowconfigure(1, weight=1)  # Give weight to text widget
         
-        # Başlık çubuğu (sürüklenebilir alan)
+        # Title bar (draggable area)
         self.title_bar = ctk.CTkFrame(self.drag_frame, height=30, fg_color=("gray85", "gray20"))
         self.title_bar.grid(row=0, column=0, sticky="ew", padx=1, pady=(1,0))
         
-        # Text widget frame (scrollbar ile)
+        # Text widget frame (with scrollbar)
         self.text_frame = ctk.CTkFrame(self.drag_frame, fg_color="transparent")
         self.text_frame.grid(row=1, column=0, sticky="nsew", padx=1, pady=1)
         self.text_frame.grid_columnconfigure(0, weight=1)
@@ -59,14 +59,14 @@ class FlexibleTranslationWindow(ctk.CTkToplevel):
         opacity = self.config_manager.get_config('translation_opacity', default=0.9)
         self.attributes('-alpha', opacity)
         
-        # Sadece başlık çubuğundan sürüklemeyi etkinleştir
+        # Enable dragging only from the title bar
         self.title_bar.bind("<Button-1>", self.start_move)
         self.title_bar.bind("<B1-Motion>", self.on_move)
         
     def start_move(self, event):
         self.x = event.x
         self.y = event.y
-        # Başlık çubuğunun pozisyonunu pencereye göre ayarla
+        # Adjust the position of the title bar relative to the window
         self.x_win = self.winfo_x()
         self.y_win = self.winfo_y()
 

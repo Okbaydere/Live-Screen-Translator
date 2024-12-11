@@ -17,8 +17,8 @@ class OCRManager:
     def __init__(self):
         self.reader = None
         self._tesseract_initialized = False
-        self._cached_results = {}  # Son OCR sonuçlarını önbellekleme
-        self._cache_timeout = 5  # 5 saniyelik önbellek süresi
+        self._cached_results = {}  # Last OCR results
+        self._cache_timeout = 5  # 5 second cache timeout
         
         tesseract_path = os.getenv('TESSERACT_PATH')
         if tesseract_path:
@@ -57,20 +57,20 @@ class OCRManager:
 
     async def process_image(self, image: Image.Image, method: str, source_lang: str = 'auto') -> str:
         try:
-            # Görüntü hash'i oluştur
+            # Create image hash
             image_hash = hash(image.tobytes())
             
-            # Önbellekte varsa ve süresi geçmediyse, önbellekten döndür
+            # If in cache and not expired, return from cache
             cache_key = (image_hash, method, source_lang)
             if cache_key in self._cached_results:
                 cached_time, cached_result = self._cached_results[cache_key]
                 if time.time() - cached_time < self._cache_timeout:
                     return cached_result
 
-            # OCR işlemini gerçekleştir
+            # Perform OCR
             result = await self._perform_ocr(image, method, source_lang)
             
-            # Sonucu önbelleğe al
+            # Cache the result
             self._cached_results[cache_key] = (time.time(), result)
             return result
 

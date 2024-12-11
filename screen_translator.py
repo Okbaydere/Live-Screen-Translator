@@ -45,7 +45,7 @@ class ScreenTranslator:
         self.error_count = 0
         self.max_errors = 3
         self.last_error_time = None
-        self.error_cooldown = 60  # saniye
+        self.error_cooldown = 60  # seconds
 
         # Shortcuts configuration
         self.shortcuts = {
@@ -82,24 +82,24 @@ class ScreenTranslator:
         self.create_enhanced_ui()
 
     def _register_shortcuts(self):
-        """Klavye kısayollarını kaydet"""
+        """Register keyboard shortcuts"""
         if self.global_shortcuts_enabled.get():
             self._register_global_shortcuts()
         else:
             self._register_local_shortcuts()
 
     def _register_local_shortcuts(self):
-        """Yerel (uygulama içi) kısayolları kaydet"""
+        """Register local (in-app) shortcuts"""
         for shortcut, (_, command) in self.shortcuts.items():
             self.root.bind_all(shortcut, lambda e, cmd=command: cmd())
 
     def _register_global_shortcuts(self):
-        """Global kısayolları kaydet"""
-        # Önce mevcut global kısayolları temizle
+        """Register global shortcuts"""
+        # Clear existing global shortcuts first
         self._unregister_global_shortcuts()
         
         for shortcut, (_, command) in self.shortcuts.items():
-            # Tkinter kısayol formatını keyboard modülü formatına çevir
+            # Convert Tkinter shortcut format to keyboard module format
             hotkey = self._convert_shortcut_format(shortcut)
             try:
                 keyboard.add_hotkey(hotkey, command)
@@ -108,7 +108,7 @@ class ScreenTranslator:
                 logging.error(f"Failed to register global hotkey {hotkey}: {e}")
 
     def _unregister_global_shortcuts(self):
-        """Global kısayolları kaldır"""
+        """Unregister global shortcuts"""
         for hotkey in self.global_hotkeys.values():
             try:
                 keyboard.remove_hotkey(hotkey)
@@ -117,7 +117,7 @@ class ScreenTranslator:
         self.global_hotkeys.clear()
 
     def _convert_shortcut_format(self, shortcut):
-        """Tkinter kısayol formatını keyboard modülü formatına çevir"""
+        """Convert Tkinter shortcut format to keyboard module format"""
         # '<Control-space>' -> 'ctrl+space'
         shortcut = shortcut.lower()
         shortcut = shortcut.replace('<', '').replace('>', '')
@@ -126,7 +126,7 @@ class ScreenTranslator:
         return shortcut
 
     def toggle_global_shortcuts(self):
-        """Global kısayolları aç/kapa"""
+        """Toggle global shortcuts"""
         if self.global_shortcuts_enabled.get():
             self._register_global_shortcuts()
             self._show_toast("Global shortcuts enabled")
@@ -136,7 +136,7 @@ class ScreenTranslator:
             self._show_toast("Global shortcuts disabled")
 
     def cycle_translation_engine(self):
-        """Çeviri motorları arasında geçiş yap"""
+        """Cycle through translation engines"""
         engines = translation_manager.get_available_engines()
         current_index = engines.index(self.translation_engine.get())
         next_index = (current_index + 1) % len(engines)
@@ -145,33 +145,33 @@ class ScreenTranslator:
         self.translation_engine.set(next_engine)
         self.change_translation_engine(next_engine)
         
-        # Kullanıcıya bilgi ver
+        # Inform user
         self._show_toast(f"Switched to {next_engine}")
         
     def cycle_ocr_engine(self):
-        """OCR motorları arasında geçiş yap"""
+        """Cycle through OCR engines"""
         engines = ["Tesseract", "EasyOCR", "Windows OCR"]
         current_index = engines.index(self.ocr_choice.get())
         next_index = (current_index + 1) % len(engines)
         next_engine = engines[next_index]
         
         self.ocr_choice.set(next_engine)
-        
-        # Kullanıcıya bilgi ver
+
+        # Inform user
         self._show_toast(f"Switched to {next_engine}")
         
     def _show_toast(self, message, duration=1000):
-        """Geçici bilgi mesajı göster"""
+        """Show temporary information message"""
         toast = ctk.CTkToplevel(self.root)
         toast.attributes('-topmost', True)
         toast.overrideredirect(True)
         
-        # Ana pencereye göre konumlandır
+        # Position relative to main window
         x = self.root.winfo_x() + self.root.winfo_width()//2
         y = self.root.winfo_y() + self.root.winfo_height() - 100
         toast.geometry(f"+{x}+{y}")
         
-        # Mesaj label'ı
+        # Message label
         label = ctk.CTkLabel(
             toast,
             text=message,
@@ -183,27 +183,27 @@ class ScreenTranslator:
         )
         label.pack()
         
-        # Belirli süre sonra kapat
+        # Close after specified time
         toast.after(duration, toast.destroy)
         
     def create_enhanced_ui(self):
-        # Ana container
+        # Main container
         container = ctk.CTkFrame(self.root, fg_color="transparent")
         container.pack(padx=30, pady=20, fill="both", expand=True)
         
-        # Grid yapılandırması - History panelini kaldır
-        container.grid_columnconfigure(0, weight=2)  # Sol panel
-        container.grid_columnconfigure(1, weight=3)  # Orta panel
+        # Grid configuration - Remove History panel
+        container.grid_columnconfigure(0, weight=2)  # Left panel
+        container.grid_columnconfigure(1, weight=3)  # Middle panel
         container.grid_rowconfigure(0, weight=0)     # Header
-        container.grid_rowconfigure(1, weight=1)     # Ana içerik
+        container.grid_rowconfigure(1, weight=1)     # Main content
 
-        # Header bölümü
+        # Header section
         header_frame = ctk.CTkFrame(container, corner_radius=15)
         header_frame.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 20))
-        header_frame.grid_columnconfigure(0, weight=1)  # Başlık için
-        header_frame.grid_columnconfigure(1, weight=0)  # Theme switch için
+        header_frame.grid_columnconfigure(0, weight=1)  # Title
+        header_frame.grid_columnconfigure(1, weight=0)  # Theme switch
         
-        # Başlık
+        # Title
         title = ctk.CTkLabel(
             header_frame,
             text="Screen Text Translator",
@@ -221,12 +221,12 @@ class ScreenTranslator:
         )
         theme_switch.grid(row=0, column=1, pady=20, padx=20, sticky="e")
 
-        # Sol panel (Ayarlar)
+        # Settings frame
         settings_frame = ctk.CTkFrame(container, corner_radius=15)
         settings_frame.grid(row=1, column=0, sticky="nsew", padx=(0, 10))
         settings_frame.grid_columnconfigure(0, weight=1)
         
-        # Settings başlık
+        # Settings title
         settings_title = ctk.CTkLabel(
             settings_frame,
             text="Settings",
@@ -243,10 +243,10 @@ class ScreenTranslator:
         settings_scroll.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
         settings_scroll.grid_columnconfigure(0, weight=1)
         
-        # Settings frame'i scrollable yapmak için
+        # Make settings frame scrollable
         settings_frame.grid_rowconfigure(1, weight=1)
 
-        # Opacity kontrolü
+        # Opacity control
         opacity_frame = ctk.CTkFrame(settings_scroll, corner_radius=10)
         opacity_frame.grid(row=0, column=0, padx=5, pady=3, sticky="ew")
         
@@ -274,7 +274,7 @@ class ScreenTranslator:
         self.opacity_slider.grid(row=2, column=0, pady=(0, 10), padx=10, sticky="ew")
         self.opacity_slider.set(90)
 
-        # Dil ayarları
+        # Language settings
         lang_frame = ctk.CTkFrame(settings_scroll, corner_radius=10)
         lang_frame.grid(row=1, column=0, padx=5, pady=3, sticky="ew")
         lang_frame.grid_columnconfigure(1, weight=1)
@@ -313,7 +313,7 @@ class ScreenTranslator:
         )
         target_lang_dropdown.grid(row=2, column=1, padx=5, pady=5, sticky="ew")
 
-        # OCR Seçimi
+        # OCR selection
         ocr_frame = ctk.CTkFrame(settings_scroll, corner_radius=10)
         ocr_frame.grid(row=2, column=0, padx=5, pady=3, sticky="ew")
         ocr_frame.grid_columnconfigure(0, weight=1)
@@ -333,7 +333,7 @@ class ScreenTranslator:
         )
         ocr_option_menu.grid(row=1, column=0, pady=(0, 10), padx=10, sticky="ew")
 
-        # Translation Tool Seçimi
+        # Translation Tool Selection
         translation_engine_frame = ctk.CTkFrame(settings_scroll, corner_radius=10)
         translation_engine_frame.grid(row=3, column=0, padx=5, pady=3, sticky="ew")
         translation_engine_frame.grid_columnconfigure(0, weight=1)
@@ -355,7 +355,7 @@ class ScreenTranslator:
         )
         engine_menu.grid(row=1, column=0, pady=(0, 10), padx=10, sticky="ew")
 
-        # Shortcuts frame'inde global shortcuts toggle'ı ekle
+        # Add global shortcuts toggle in the shortcuts frame
         shortcuts_frame = ctk.CTkFrame(settings_scroll, corner_radius=10)
         shortcuts_frame.grid(row=4, column=0, padx=5, pady=3, sticky="ew")
         shortcuts_frame.grid_columnconfigure(0, weight=1)
@@ -394,13 +394,13 @@ class ScreenTranslator:
             justify="left"
         ).grid(row=1, column=0, pady=(0, 10), padx=10, sticky="w")
 
-        # Sağ panel (main panel) düzenlemesi
+        # Configure the right panel (main panel)
         main_panel = ctk.CTkFrame(container, corner_radius=15)
         main_panel.grid(row=1, column=1, sticky="nsew")
         main_panel.grid_columnconfigure(0, weight=1)
-        main_panel.grid_rowconfigure(3, weight=1)  # Butonlar arasındaki boşluk için
+        main_panel.grid_rowconfigure(3, weight=1)  # Space between buttons
 
-        # Bölge seçim butonu
+        # Region selection button
         select_btn = ctk.CTkButton(
             main_panel,
             text="Select Screen Region 📷",
@@ -412,7 +412,7 @@ class ScreenTranslator:
         )
         select_btn.grid(row=0, column=0, pady=(20, 10), padx=30, sticky="ew")
 
-        # Durum göstergesi
+        # Status indicator
         self.region_status = ctk.CTkLabel(
             main_panel,
             text="No region selected",
@@ -421,7 +421,7 @@ class ScreenTranslator:
         )
         self.region_status.grid(row=1, column=0, pady=10, sticky="ew")
 
-        # Başlat/Durdur butonu
+        # Start/Stop button
         self.start_btn = ctk.CTkButton(
             main_panel,
             text="Start Translation ▶️",
@@ -434,14 +434,14 @@ class ScreenTranslator:
         )
         self.start_btn.grid(row=2, column=0, pady=(10, 10), padx=30, sticky="ew")
 
-        # Translation History butonu
+        # Translation History button
         history_btn = ctk.CTkButton(
             main_panel,
             text="Translation History 📜",
             command=self.show_history_window,
             height=45,
             font=("Helvetica", 14),
-            fg_color=("#8B4513", "#654321"),  # Kahverengi tonları
+            fg_color=("#8B4513", "#654321"),  # Brown tones
             hover_color=("#654321", "#543210")
         )
         history_btn.grid(row=3, column=0, pady=(10, 30), padx=30, sticky="ew")
@@ -526,12 +526,12 @@ class ScreenTranslator:
                 self.ocr_choice.get(),
                 self.source_lang.get()
             )
-            self.error_count = 0  # Başarılı işlemde hata sayacını sıfırla
+            self.error_count = 0  # Reset error counter on successful operation
             return result
         except Exception as e:
             current_time = time.time()
             
-            # Hata soğuma süresini kontrol et
+            # Check error cooldown period
             if self.last_error_time and (current_time - self.last_error_time) > self.error_cooldown:
                 self.error_count = 0
             
@@ -560,7 +560,7 @@ class ScreenTranslator:
             self.stop_translation()
 
     def translation_worker(self):
-        # Event loop oluştur
+        # Create event loop
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         
@@ -577,7 +577,7 @@ class ScreenTranslator:
                         target_lang=self.target_lang.get()
                     )
                     
-                    # Asenkron olarak geçmişe kaydet
+                    # Save to history asynchronously
                     loop.run_until_complete(self.translation_history.add_entry(
                         source_text=text,
                         translated_text=translation,
@@ -587,7 +587,7 @@ class ScreenTranslator:
                         target_lang=self.target_lang.get()
                     ))
                     
-                    # Translation display güncelle
+                    # Update translation display
                     self.root.after(0, lambda t=translation: self.update_translation_display(t))
                 
                 time.sleep(0.5)
@@ -598,7 +598,7 @@ class ScreenTranslator:
                 self.stop_translation()
                 break
         
-        # Event loop'u kapat
+        # Close event loop
         loop.close()
 
     def create_translation_window(self):
@@ -675,17 +675,17 @@ class ScreenTranslator:
         self.config_manager.update_config('theme', 'mode', new_mode.lower())
 
     def update_opacity_value(self, value):
-        """Opacity değerini güncelle ve label'ı değiştir"""
+        """Update opacity value and change label"""
         percentage = int(value)
         self.opacity_value_label.configure(text=f"{percentage}%")
         
-        # Eğer translation window açıksa, opacity'sini güncelle
+        # If translation window is open, update its opacity
         if hasattr(self, 'translation_window') and self.translation_window:
             if self.translation_window.winfo_exists():
                 self.translation_window.attributes('-alpha', percentage / 100)
 
     def on_closing(self):
-        """Uygulama kapanırken global kısayolları temizle"""
+        """Clean up global shortcuts when the application closes"""
         self._unregister_global_shortcuts()
         self.root.destroy()
 
@@ -693,7 +693,7 @@ class ScreenTranslator:
         self.root.mainloop()
 
     def show_history_window(self):
-        """Çeviri geçmişi penceresini göster"""
+        """Show translation history window"""
         if self.history_window is None or not self.history_window.winfo_exists():
             self.history_window = ctk.CTkToplevel(self.root)
             self.history_window.title("Translation History")
@@ -704,7 +704,7 @@ class ScreenTranslator:
             scroll_frame = ctk.CTkScrollableFrame(self.history_window)
             scroll_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
-            # Başlık satırı
+            # Header row
             headers = ["Time", "Source Text", "Translation", "OCR", "Translation Engine", "Languages"]
             for col, header in enumerate(headers):
                 label = ctk.CTkLabel(
@@ -714,7 +714,7 @@ class ScreenTranslator:
                 )
                 label.grid(row=0, column=col, padx=5, pady=5, sticky="w")
 
-            # Geçmiş kayıtları listele
+            # List history records
             history = self.translation_history.get_history()
             for row, entry in enumerate(history, start=1):
                 time_label = ctk.CTkLabel(
@@ -765,29 +765,29 @@ class ScreenTranslator:
             clear_btn.pack(pady=10)
 
     def clear_history(self):
-        """Geçmişi temizle"""
+        """Clear history"""
         if messagebox.askyesno("Clear History", "Are you sure you want to clear the translation history?"):
             self.translation_history.clear_history()
             if self.history_window:
                 self.history_window.destroy()
 
     def update_history_display(self):
-        """Geçmiş kayıtlarını güncelle"""
-        # Önce mevcut içeriği temizle
+        """Update history records"""
+        # First clear existing content
         for widget in self.history_scroll.winfo_children():
             widget.destroy()
 
-        # Geçmiş kayıtları getir
+        # Get history records
         history = self.translation_history.get_history()
 
-        # Her kayıt için bir kart oluştur
+        # Create a card for each record
         for entry in history:
-            # Kart frame
+            # Card frame
             card = ctk.CTkFrame(self.history_scroll, corner_radius=10)
             card.pack(fill="x", padx=5, pady=3)
             card.grid_columnconfigure(1, weight=1)
 
-            # Zaman
+            # Time
             time_str = datetime.fromisoformat(entry['timestamp']).strftime("%H:%M:%S")
             ctk.CTkLabel(
                 card,
@@ -796,7 +796,7 @@ class ScreenTranslator:
                 text_color=("gray50", "gray70")
             ).grid(row=0, column=0, padx=5, pady=2, sticky="w")
 
-            # OCR ve Translation Engine
+            # OCR and Translation Engine
             engine_info = f"{entry['ocr_engine']} → {entry['translation_engine']}"
             ctk.CTkLabel(
                 card,
@@ -805,7 +805,7 @@ class ScreenTranslator:
                 text_color=("gray50", "gray70")
             ).grid(row=0, column=1, padx=5, pady=2, sticky="e")
 
-            # Kaynak metin
+            # Source text
             ctk.CTkLabel(
                 card,
                 text=entry['source_text'],
@@ -814,7 +814,7 @@ class ScreenTranslator:
                 justify="left"
             ).grid(row=1, column=0, columnspan=2, padx=5, pady=(0,2), sticky="w")
 
-            # Çeviri
+            # Translation
             ctk.CTkLabel(
                 card,
                 text=entry['translated_text'],

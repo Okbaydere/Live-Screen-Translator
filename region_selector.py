@@ -36,7 +36,7 @@ class RegionSelector:
             height=self.screen_height,
             highlightthickness=0,
             cursor='cross',
-            bg='white'  # Beyaz arka plan ekle
+            bg='white'  # Add white background
         )
         self.canvas.pack(fill=tk.BOTH, expand=True)
 

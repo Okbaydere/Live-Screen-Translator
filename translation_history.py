@@ -10,11 +10,11 @@ class TranslationHistory:
         self.history_file = history_file
         self.history: List[Dict] = self.load_history()
         self.max_entries = 100
-        self._executor = ThreadPoolExecutor(max_workers=1)  # Tek thread yeterli
-        self._save_lock = asyncio.Lock()  # Eşzamanlı yazmaları önle
+        self._executor = ThreadPoolExecutor(max_workers=1)  # One thread is sufficient
+        self._save_lock = asyncio.Lock()  # Prevent concurrent writes
 
     def load_history(self) -> List[Dict]:
-        """Geçmiş kayıtları dosyadan yükle"""
+        """Load history records from file"""
         if os.path.exists(self.history_file):
             try:
                 with open(self.history_file, 'r', encoding='utf-8') as f:
@@ -24,7 +24,7 @@ class TranslationHistory:
         return []
 
     async def save_history_async(self):
-        """Geçmiş kayıtları asenkron olarak dosyaya kaydet"""
+        """Save history records to file asynchronously"""
         async with self._save_lock:
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(self._executor, self._save_to_file)
@@ -36,7 +36,7 @@ class TranslationHistory:
 
     async def add_entry(self, source_text: str, translated_text: str, ocr_engine: str,
                        translation_engine: str, source_lang: str, target_lang: str):
-        """Yeni çeviri kaydını asenkron olarak ekle"""
+        """Add a new translation record asynchronously"""
         entry = {
             'timestamp': datetime.now().isoformat(),
             'source_text': source_text,
@@ -54,10 +54,10 @@ class TranslationHistory:
         await self.save_history_async()
 
     def get_history(self, limit: int = None) -> List[Dict]:
-        """Geçmiş kayıtları getir"""
+        """Retrieve history records"""
         return self.history[:limit] if limit else self.history
 
     def clear_history(self):
-        """Geçmişi temizle"""
+        """Clear history"""
         self.history = []
         self.save_history() 

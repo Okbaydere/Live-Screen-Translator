@@ -40,7 +40,7 @@ class GeminiTranslator(TranslationEngine):
 
     def translate(self, text: str, source_lang: str, target_lang: str) -> Optional[str]:
         try:
-            # Dil kodlarını insan tarafından okunabilir formata çevir
+            # Convert language codes to human-readable format
             target = "Turkish" if target_lang.lower() == "tr" else "English"
             
             prompt = f"""Translate the following text to {target}. 
