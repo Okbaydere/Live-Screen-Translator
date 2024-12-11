@@ -1,0 +1,834 @@
+import tkinter as tk
+from tkinter import messagebox
+import threading
+import time
+import logging
+import traceback
+from PIL import ImageGrab
+import customtkinter as ctk
+import asyncio
+import keyboard
+from datetime import datetime
+
+from region_selector import RegionSelector
+from translation_worker import translate_text, translation_manager
+from config_manager import ConfigManager
+from ocr_manager import OCRManager
+from translation_window import FlexibleTranslationWindow
+from translation_history import TranslationHistory
+
+class ScreenTranslator:
+    def __init__(self):
+        self.root = ctk.CTk()
+        self.config_manager = ConfigManager()
+        self.ocr_manager = OCRManager()
+        
+        # Instance attributes
+        self.selected_region = None
+        self.is_translating = False
+        self.translation_thread = None
+        self.previous_text = ""
+        self.translation_window = None
+        self.translation_history = TranslationHistory()
+        self.history_window = None
+
+        # Variables
+        self.source_lang = tk.StringVar(value="auto")
+        self.target_lang = tk.StringVar(value="TR")
+        self.ocr_choice = tk.StringVar(value="Tesseract")
+        self.translation_engine = tk.StringVar(value="Local API")
+
+        # Load theme from config
+        theme_mode = self.config_manager.get_config('theme', 'mode', 'dark')
+        ctk.set_appearance_mode(theme_mode.capitalize())
+
+        self.error_count = 0
+        self.max_errors = 3
+        self.last_error_time = None
+        self.error_cooldown = 60  # saniye
+
+        # Shortcuts configuration
+        self.shortcuts = {
+            '<Control-space>': ('Start/Stop Translation', self.toggle_translation),
+            '<Control-r>': ('Select New Region', self.select_screen_region),
+            '<Control-t>': ('Change Translation Engine', self.cycle_translation_engine),
+            '<Control-o>': ('Change OCR Engine', self.cycle_ocr_engine),
+            '<Escape>': ('Stop Translation', self.stop_translation),
+            '<Control-h>': ('Show Translation History', self.show_history_window)
+        }
+        
+        # Global shortcuts state
+        self.global_shortcuts_enabled = tk.BooleanVar(value=False)
+        self.global_hotkeys = {}  # Store registered global hotkeys
+        
+        self._initialize_application()
+
+    def _initialize_application(self):
+        """Initialize the application components"""
+        # Configure logging
+        logging.basicConfig(level=logging.INFO)
+        logging.info("Application initialized")
+
+        # Configure window
+        self.root.title("Screen Text Translator")
+        self.root.geometry("700x500")
+        self.root.minsize(600, 450)
+        self.root.attributes('-topmost', True)
+
+        # Register keyboard shortcuts
+        self._register_shortcuts()
+
+        # Create UI
+        self.create_enhanced_ui()
+
+    def _register_shortcuts(self):
+        """Klavye kısayollarını kaydet"""
+        if self.global_shortcuts_enabled.get():
+            self._register_global_shortcuts()
+        else:
+            self._register_local_shortcuts()
+
+    def _register_local_shortcuts(self):
+        """Yerel (uygulama içi) kısayolları kaydet"""
+        for shortcut, (_, command) in self.shortcuts.items():
+            self.root.bind_all(shortcut, lambda e, cmd=command: cmd())
+
+    def _register_global_shortcuts(self):
+        """Global kısayolları kaydet"""
+        # Önce mevcut global kısayolları temizle
+        self._unregister_global_shortcuts()
+        
+        for shortcut, (_, command) in self.shortcuts.items():
+            # Tkinter kısayol formatını keyboard modülü formatına çevir
+            hotkey = self._convert_shortcut_format(shortcut)
+            try:
+                keyboard.add_hotkey(hotkey, command)
+                self.global_hotkeys[shortcut] = hotkey
+            except Exception as e:
+                logging.error(f"Failed to register global hotkey {hotkey}: {e}")
+
+    def _unregister_global_shortcuts(self):
+        """Global kısayolları kaldır"""
+        for hotkey in self.global_hotkeys.values():
+            try:
+                keyboard.remove_hotkey(hotkey)
+            except Exception as e:
+                logging.error(f"Failed to unregister global hotkey {hotkey}: {e}")
+        self.global_hotkeys.clear()
+
+    def _convert_shortcut_format(self, shortcut):
+        """Tkinter kısayol formatını keyboard modülü formatına çevir"""
+        # '<Control-space>' -> 'ctrl+space'
+        shortcut = shortcut.lower()
+        shortcut = shortcut.replace('<', '').replace('>', '')
+        shortcut = shortcut.replace('control', 'ctrl')
+        shortcut = shortcut.replace('-', '+')
+        return shortcut
+
+    def toggle_global_shortcuts(self):
+        """Global kısayolları aç/kapa"""
+        if self.global_shortcuts_enabled.get():
+            self._register_global_shortcuts()
+            self._show_toast("Global shortcuts enabled")
+        else:
+            self._unregister_global_shortcuts()
+            self._register_local_shortcuts()
+            self._show_toast("Global shortcuts disabled")
+
+    def cycle_translation_engine(self):
+        """Çeviri motorları arasında geçiş yap"""
+        engines = translation_manager.get_available_engines()
+        current_index = engines.index(self.translation_engine.get())
+        next_index = (current_index + 1) % len(engines)
+        next_engine = engines[next_index]
+        
+        self.translation_engine.set(next_engine)
+        self.change_translation_engine(next_engine)
+        
+        # Kullanıcıya bilgi ver
+        self._show_toast(f"Switched to {next_engine}")
+        
+    def cycle_ocr_engine(self):
+        """OCR motorları arasında geçiş yap"""
+        engines = ["Tesseract", "EasyOCR", "Windows OCR"]
+        current_index = engines.index(self.ocr_choice.get())
+        next_index = (current_index + 1) % len(engines)
+        next_engine = engines[next_index]
+        
+        self.ocr_choice.set(next_engine)
+        
+        # Kullanıcıya bilgi ver
+        self._show_toast(f"Switched to {next_engine}")
+        
+    def _show_toast(self, message, duration=1000):
+        """Geçici bilgi mesajı göster"""
+        toast = ctk.CTkToplevel(self.root)
+        toast.attributes('-topmost', True)
+        toast.overrideredirect(True)
+        
+        # Ana pencereye göre konumlandır
+        x = self.root.winfo_x() + self.root.winfo_width()//2
+        y = self.root.winfo_y() + self.root.winfo_height() - 100
+        toast.geometry(f"+{x}+{y}")
+        
+        # Mesaj label'ı
+        label = ctk.CTkLabel(
+            toast,
+            text=message,
+            font=("Helvetica", 12),
+            fg_color=("gray85", "gray25"),
+            corner_radius=6,
+            padx=10,
+            pady=5
+        )
+        label.pack()
+        
+        # Belirli süre sonra kapat
+        toast.after(duration, toast.destroy)
+        
+    def create_enhanced_ui(self):
+        # Ana container
+        container = ctk.CTkFrame(self.root, fg_color="transparent")
+        container.pack(padx=30, pady=20, fill="both", expand=True)
+        
+        # Grid yapılandırması - History panelini kaldır
+        container.grid_columnconfigure(0, weight=2)  # Sol panel
+        container.grid_columnconfigure(1, weight=3)  # Orta panel
+        container.grid_rowconfigure(0, weight=0)     # Header
+        container.grid_rowconfigure(1, weight=1)     # Ana içerik
+
+        # Header bölümü
+        header_frame = ctk.CTkFrame(container, corner_radius=15)
+        header_frame.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 20))
+        header_frame.grid_columnconfigure(0, weight=1)  # Başlık için
+        header_frame.grid_columnconfigure(1, weight=0)  # Theme switch için
+        
+        # Başlık
+        title = ctk.CTkLabel(
+            header_frame,
+            text="Screen Text Translator",
+            font=("Helvetica", 24, "bold"),
+            text_color=("gray10", "gray90")
+        )
+        title.grid(row=0, column=0, pady=20, padx=20, sticky="w")
+
+        # Theme switch
+        theme_switch = ctk.CTkSwitch(
+            header_frame,
+            text="Dark Mode",
+            command=self.toggle_theme,
+            variable=ctk.StringVar(value="on")
+        )
+        theme_switch.grid(row=0, column=1, pady=20, padx=20, sticky="e")
+
+        # Sol panel (Ayarlar)
+        settings_frame = ctk.CTkFrame(container, corner_radius=15)
+        settings_frame.grid(row=1, column=0, sticky="nsew", padx=(0, 10))
+        settings_frame.grid_columnconfigure(0, weight=1)
+        
+        # Settings başlık
+        settings_title = ctk.CTkLabel(
+            settings_frame,
+            text="Settings",
+            font=("Helvetica", 16, "bold")
+        )
+        settings_title.grid(row=0, column=0, pady=(15,5), sticky="ew")
+
+        # Scrollable frame for settings
+        settings_scroll = ctk.CTkScrollableFrame(
+            settings_frame,
+            corner_radius=10,
+            fg_color="transparent"
+        )
+        settings_scroll.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
+        settings_scroll.grid_columnconfigure(0, weight=1)
+        
+        # Settings frame'i scrollable yapmak için
+        settings_frame.grid_rowconfigure(1, weight=1)
+
+        # Opacity kontrolü
+        opacity_frame = ctk.CTkFrame(settings_scroll, corner_radius=10)
+        opacity_frame.grid(row=0, column=0, padx=5, pady=3, sticky="ew")
+        
+        opacity_label = ctk.CTkLabel(
+            opacity_frame,
+            text="Translation Window Opacity",
+            font=("Helvetica", 12, "bold")
+        )
+        opacity_label.grid(row=0, column=0, pady=5, sticky="ew")
+        
+        self.opacity_value_label = ctk.CTkLabel(
+            opacity_frame,
+            text="90%",
+            font=("Helvetica", 10)
+        )
+        self.opacity_value_label.grid(row=1, column=0, sticky="ew")
+        
+        self.opacity_slider = ctk.CTkSlider(
+            opacity_frame,
+            from_=20,
+            to=100,
+            number_of_steps=80,
+            command=self.update_opacity_value,
+        )
+        self.opacity_slider.grid(row=2, column=0, pady=(0, 10), padx=10, sticky="ew")
+        self.opacity_slider.set(90)
+
+        # Dil ayarları
+        lang_frame = ctk.CTkFrame(settings_scroll, corner_radius=10)
+        lang_frame.grid(row=1, column=0, padx=5, pady=3, sticky="ew")
+        lang_frame.grid_columnconfigure(1, weight=1)
+        
+        ctk.CTkLabel(
+            lang_frame,
+            text="Language Settings",
+            font=("Helvetica", 12, "bold")
+        ).grid(row=0, column=0, columnspan=2, pady=5, sticky="ew")
+        
+        ctk.CTkLabel(
+            lang_frame,
+            text="Source:",
+            font=("Helvetica", 12)
+        ).grid(row=1, column=0, padx=5, pady=5)
+        
+        source_lang_dropdown = ctk.CTkComboBox(
+            lang_frame,
+            values=['auto', 'en', 'tr', 'de', 'fr', 'es', 'ru', 'ar', 'zh'],
+            variable=self.source_lang,
+            width=100
+        )
+        source_lang_dropdown.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
+        
+        ctk.CTkLabel(
+            lang_frame,
+            text="Target:",
+            font=("Helvetica", 12)
+        ).grid(row=2, column=0, padx=5, pady=5)
+        
+        target_lang_dropdown = ctk.CTkComboBox(
+            lang_frame,
+            values=['tr', 'en', 'de', 'fr', 'es', 'ru', 'ar', 'zh'],
+            variable=self.target_lang,
+            width=100
+        )
+        target_lang_dropdown.grid(row=2, column=1, padx=5, pady=5, sticky="ew")
+
+        # OCR Seçimi
+        ocr_frame = ctk.CTkFrame(settings_scroll, corner_radius=10)
+        ocr_frame.grid(row=2, column=0, padx=5, pady=3, sticky="ew")
+        ocr_frame.grid_columnconfigure(0, weight=1)
+        
+        ctk.CTkLabel(
+            ocr_frame,
+            text="OCR Engine",
+            font=("Helvetica", 12, "bold")
+        ).grid(row=0, column=0, pady=5, sticky="ew")
+        
+        ocr_option_menu = ctk.CTkComboBox(
+            ocr_frame,
+            values=["Tesseract", "EasyOCR", "Windows OCR"],  # Add Windows OCR option
+            variable=self.ocr_choice,
+            width=150,
+            state="readonly"
+        )
+        ocr_option_menu.grid(row=1, column=0, pady=(0, 10), padx=10, sticky="ew")
+
+        # Translation Tool Seçimi
+        translation_engine_frame = ctk.CTkFrame(settings_scroll, corner_radius=10)
+        translation_engine_frame.grid(row=3, column=0, padx=5, pady=3, sticky="ew")
+        translation_engine_frame.grid_columnconfigure(0, weight=1)
+        
+        ctk.CTkLabel(
+            translation_engine_frame,
+            text="Translation Engine",
+            font=("Helvetica", 12, "bold")
+        ).grid(row=0, column=0, pady=5, sticky="ew")
+        
+        engine_options = translation_manager.get_available_engines()
+        engine_menu = ctk.CTkComboBox(
+            translation_engine_frame,
+            values=engine_options,
+            variable=self.translation_engine,
+            command=self.change_translation_engine,
+            width=150,
+            state="readonly"
+        )
+        engine_menu.grid(row=1, column=0, pady=(0, 10), padx=10, sticky="ew")
+
+        # Shortcuts frame'inde global shortcuts toggle'ı ekle
+        shortcuts_frame = ctk.CTkFrame(settings_scroll, corner_radius=10)
+        shortcuts_frame.grid(row=4, column=0, padx=5, pady=3, sticky="ew")
+        shortcuts_frame.grid_columnconfigure(0, weight=1)
+        
+        # Header frame for title and toggle
+        header_frame = ctk.CTkFrame(shortcuts_frame, fg_color="transparent")
+        header_frame.grid(row=0, column=0, sticky="ew", padx=5, pady=5)
+        header_frame.grid_columnconfigure(1, weight=1)
+        
+        ctk.CTkLabel(
+            header_frame,
+            text="Keyboard Shortcuts",
+            font=("Helvetica", 12, "bold")
+        ).grid(row=0, column=0, sticky="w")
+        
+        # Global shortcuts toggle
+        global_toggle = ctk.CTkSwitch(
+            header_frame,
+            text="Global Shortcuts",
+            variable=self.global_shortcuts_enabled,
+            command=self.toggle_global_shortcuts,
+            width=60
+        )
+        global_toggle.grid(row=0, column=1, sticky="e")
+        
+        # Shortcuts list
+        shortcuts_text = "\n".join(
+            f"{shortcut.replace('<', '').replace('>', '')}: {desc}"
+            for shortcut, (desc, _) in self.shortcuts.items()
+        )
+        
+        ctk.CTkLabel(
+            shortcuts_frame,
+            text=shortcuts_text,
+            font=("Helvetica", 10),
+            justify="left"
+        ).grid(row=1, column=0, pady=(0, 10), padx=10, sticky="w")
+
+        # Sağ panel (main panel) düzenlemesi
+        main_panel = ctk.CTkFrame(container, corner_radius=15)
+        main_panel.grid(row=1, column=1, sticky="nsew")
+        main_panel.grid_columnconfigure(0, weight=1)
+        main_panel.grid_rowconfigure(3, weight=1)  # Butonlar arasındaki boşluk için
+
+        # Bölge seçim butonu
+        select_btn = ctk.CTkButton(
+            main_panel,
+            text="Select Screen Region 📷",
+            command=self.select_screen_region,
+            height=45,
+            font=("Helvetica", 14),
+            fg_color=("#2B7539", "#1F5C2D"),
+            hover_color=("#235F2F", "#194B25")
+        )
+        select_btn.grid(row=0, column=0, pady=(20, 10), padx=30, sticky="ew")
+
+        # Durum göstergesi
+        self.region_status = ctk.CTkLabel(
+            main_panel,
+            text="No region selected",
+            text_color=("gray60", "gray70"),
+            font=("Helvetica", 12)
+        )
+        self.region_status.grid(row=1, column=0, pady=10, sticky="ew")
+
+        # Başlat/Durdur butonu
+        self.start_btn = ctk.CTkButton(
+            main_panel,
+            text="Start Translation ▶️",
+            command=self.toggle_translation,
+            state="disabled",
+            height=50,
+            font=("Helvetica", 16, "bold"),
+            fg_color=("#2B5EA8", "#1F4475"),
+            hover_color=("#234B85", "#193A5E")
+        )
+        self.start_btn.grid(row=2, column=0, pady=(10, 10), padx=30, sticky="ew")
+
+        # Translation History butonu
+        history_btn = ctk.CTkButton(
+            main_panel,
+            text="Translation History 📜",
+            command=self.show_history_window,
+            height=45,
+            font=("Helvetica", 14),
+            fg_color=("#8B4513", "#654321"),  # Kahverengi tonları
+            hover_color=("#654321", "#543210")
+        )
+        history_btn.grid(row=3, column=0, pady=(10, 30), padx=30, sticky="ew")
+
+    def update_button(self, button, text, fg_color, hover_color):
+        """Update button text and colors."""
+        button.configure(text=text, fg_color=fg_color, hover_color=hover_color)
+
+    def update_region_status(self, text, text_color):
+        """Update region selection status."""
+        self.region_status.configure(text=text, text_color=text_color)
+
+    def select_screen_region(self):
+        try:
+            logging.info("Attempting to select screen region")
+            self.root.withdraw()
+            
+            selector = RegionSelector()
+            selected_region = selector.get_region()
+            
+            self.root.deiconify()
+            
+            if selected_region:
+                logging.info(f"Region selected: {selected_region}")
+                self.selected_region = selected_region
+                self.update_region_status("✅ Region selected", ("#2B7539", "#1F5C2D"))
+                self.start_btn.configure(state="normal")
+            else:
+                logging.warning("No region was selected")
+                self.update_region_status("❌ No region selected", ("#C42B2B", "#8B1F1F"))
+                self.start_btn.configure(state="disabled")
+                self.selected_region = None
+
+        except Exception as exc:
+            logging.error(f"Error in region selection: {exc}")
+            logging.error(traceback.format_exc())
+            messagebox.showerror("Error", f"Failed to select region: {exc}")
+        finally:
+            self.root.deiconify()
+
+    def toggle_translation(self):
+        if not self.selected_region:
+            messagebox.showerror("Error", "Please select a screen region first!")
+            return
+
+        if not self.is_translating:
+            self.update_button(
+                self.start_btn,
+                "Stop Translation ⏹️",
+                ("#C42B2B", "#8B1F1F"),
+                ("#A32424", "#701919")
+            )
+            self.start_translation()
+        else:
+            self.update_button(
+                self.start_btn,
+                "Start Translation ▶️",
+                ("#2B5EA8", "#1F4475"),
+                ("#234B85", "#193A5E")
+            )
+            self.stop_translation()
+
+    def start_translation(self):
+        self.is_translating = True
+        self.start_btn.configure(text="Stop Translation")
+        self.translation_thread = threading.Thread(
+            target=self.translation_worker, daemon=True
+        )
+        self.translation_thread.start()
+
+    def stop_translation(self):
+        self.is_translating = False
+        self.start_btn.configure(text="Start Translation")
+        if self.translation_window:
+            self.translation_window.destroy()
+            self.translation_window = None
+
+    async def _process_ocr(self, screenshot):
+        try:
+            result = await self.ocr_manager.process_image(
+                screenshot,
+                self.ocr_choice.get(),
+                self.source_lang.get()
+            )
+            self.error_count = 0  # Başarılı işlemde hata sayacını sıfırla
+            return result
+        except Exception as e:
+            current_time = time.time()
+            
+            # Hata soğuma süresini kontrol et
+            if self.last_error_time and (current_time - self.last_error_time) > self.error_cooldown:
+                self.error_count = 0
+            
+            self.error_count += 1
+            self.last_error_time = current_time
+            
+            if self.error_count >= self.max_errors:
+                self.root.after(0, self._show_error_dialog, str(e))
+                raise Exception("Maximum error limit reached")
+            
+            logging.warning(f"OCR error (attempt {self.error_count}): {e}")
+            return ""
+
+    def _show_error_dialog(self, error_message):
+        dialog = ctk.CTkDialog(
+            self.root,
+            title="Error",
+            text=f"An error occurred:\n{error_message}\n\nWould you like to retry?",
+            button_1_text="Retry",
+            button_2_text="Stop"
+        )
+        if dialog.get() == "Retry":
+            self.error_count = 0
+            self.start_translation()
+        else:
+            self.stop_translation()
+
+    def translation_worker(self):
+        # Event loop oluştur
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        while self.is_translating:
+            try:
+                screenshot = ImageGrab.grab(bbox=self.selected_region)
+                text = loop.run_until_complete(self._process_ocr(screenshot))
+                
+                if text and text.strip() and text != self.previous_text:
+                    self.previous_text = text
+                    translation = translate_text(
+                        text,
+                        source_lang=self.source_lang.get(),
+                        target_lang=self.target_lang.get()
+                    )
+                    
+                    # Asenkron olarak geçmişe kaydet
+                    loop.run_until_complete(self.translation_history.add_entry(
+                        source_text=text,
+                        translated_text=translation,
+                        ocr_engine=self.ocr_choice.get(),
+                        translation_engine=self.translation_engine.get(),
+                        source_lang=self.source_lang.get(),
+                        target_lang=self.target_lang.get()
+                    ))
+                    
+                    # Translation display güncelle
+                    self.root.after(0, lambda t=translation: self.update_translation_display(t))
+                
+                time.sleep(0.5)
+                
+            except Exception as exc:
+                logging.error(f"Translation error: {exc}")
+                self.root.after(0, lambda: messagebox.showerror("Error", str(exc)))
+                self.stop_translation()
+                break
+        
+        # Event loop'u kapat
+        loop.close()
+
+    def create_translation_window(self):
+        """Simplified translation window creation"""
+        if hasattr(self, 'translation_window') and self.translation_window and self.translation_window.winfo_exists():
+            return
+
+        self.translation_window = FlexibleTranslationWindow(self.root, self.config_manager)
+        self.translated_text = self.translation_window.text_widget
+        self.translation_window.protocol("WM_DELETE_WINDOW", self.stop_translation)
+
+    def update_translation_opacity(self, opacity):
+        """Update opacity of translation window"""
+        if self.translation_window and self.translation_window.winfo_exists():
+            self.translation_window.attributes('-alpha', opacity)
+
+    def on_translation_window_close(self):
+        # Stop translation when the translation window is closed
+        self.stop_translation()
+
+    def update_translation_display(self, translated):
+        """Update translation display"""
+        # Create translation window if it doesn't exist
+        if not self.translation_window:
+            self.create_translation_window()
+
+        # Update text in the main thread
+        self.translation_window.after(0, lambda: self.update_translation_window(translated))
+
+    def update_translation_window(self, translated):
+        """Update translation text with dynamic formatting"""
+        # Enable editing temporarily
+        self.translated_text.configure(state="normal")
+
+        # Clear previous text
+        self.translated_text.delete("1.0", tk.END)
+
+        # Insert new translation
+        self.translated_text.insert(tk.END, translated)
+
+        # Dynamically adjust font size based on content length
+        content_length = len(translated)
+        base_font_size = max(12, min(16, int(16 - content_length / 50)))
+        self.translated_text.configure(font=("Helvetica", base_font_size))
+
+        # Return to read-only state
+        self.translated_text.configure(state="disabled")
+
+    def copy_translation(self):
+        """Copy translation to clipboard"""
+        self.translated_text.configure(state="normal")
+        translation = self.translated_text.get('1.0', tk.END).strip()
+        self.translated_text.configure(state="disabled")
+
+        if translation:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(translation) 
+            messagebox.showinfo("Copied", "Translation copied to clipboard!")
+
+    def change_theme(self, new_theme=None):
+        """Change theme function"""
+        theme = new_theme or self.current_theme.get()
+        ctk.set_appearance_mode(theme)
+
+    def change_translation_engine(self, engine_name):
+        """Change the translation engine"""
+        translation_manager.set_engine(engine_name)
+        logging.info(f"Translation engine changed to: {engine_name}")
+
+    def toggle_theme(self):
+        """Simplified theme toggle"""
+        new_mode = "Light" if ctk.get_appearance_mode() == "Dark" else "Dark"
+        ctk.set_appearance_mode(new_mode)
+        self.config_manager.update_config('theme', 'mode', new_mode.lower())
+
+    def update_opacity_value(self, value):
+        """Opacity değerini güncelle ve label'ı değiştir"""
+        percentage = int(value)
+        self.opacity_value_label.configure(text=f"{percentage}%")
+        
+        # Eğer translation window açıksa, opacity'sini güncelle
+        if hasattr(self, 'translation_window') and self.translation_window:
+            if self.translation_window.winfo_exists():
+                self.translation_window.attributes('-alpha', percentage / 100)
+
+    def on_closing(self):
+        """Uygulama kapanırken global kısayolları temizle"""
+        self._unregister_global_shortcuts()
+        self.root.destroy()
+
+    def run(self):
+        self.root.mainloop()
+
+    def show_history_window(self):
+        """Çeviri geçmişi penceresini göster"""
+        if self.history_window is None or not self.history_window.winfo_exists():
+            self.history_window = ctk.CTkToplevel(self.root)
+            self.history_window.title("Translation History")
+            self.history_window.geometry("800x600")
+            self.history_window.attributes('-topmost', True)
+
+            # Scrollable frame
+            scroll_frame = ctk.CTkScrollableFrame(self.history_window)
+            scroll_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+            # Başlık satırı
+            headers = ["Time", "Source Text", "Translation", "OCR", "Translation Engine", "Languages"]
+            for col, header in enumerate(headers):
+                label = ctk.CTkLabel(
+                    scroll_frame,
+                    text=header,
+                    font=("Helvetica", 12, "bold")
+                )
+                label.grid(row=0, column=col, padx=5, pady=5, sticky="w")
+
+            # Geçmiş kayıtları listele
+            history = self.translation_history.get_history()
+            for row, entry in enumerate(history, start=1):
+                time_label = ctk.CTkLabel(
+                    scroll_frame,
+                    text=datetime.fromisoformat(entry['timestamp']).strftime("%H:%M:%S"),
+                    wraplength=100
+                )
+                time_label.grid(row=row, column=0, padx=5, pady=5, sticky="nw")
+
+                source_label = ctk.CTkLabel(
+                    scroll_frame,
+                    text=entry['source_text'],
+                    wraplength=150
+                )
+                source_label.grid(row=row, column=1, padx=5, pady=5, sticky="nw")
+
+                trans_label = ctk.CTkLabel(
+                    scroll_frame,
+                    text=entry['translated_text'],
+                    wraplength=150
+                )
+                trans_label.grid(row=row, column=2, padx=5, pady=5, sticky="nw")
+
+                ocr_label = ctk.CTkLabel(
+                    scroll_frame,
+                    text=entry['ocr_engine']
+                )
+                ocr_label.grid(row=row, column=3, padx=5, pady=5, sticky="nw")
+
+                engine_label = ctk.CTkLabel(
+                    scroll_frame,
+                    text=entry['translation_engine']
+                )
+                engine_label.grid(row=row, column=4, padx=5, pady=5, sticky="nw")
+
+                lang_label = ctk.CTkLabel(
+                    scroll_frame,
+                    text=f"{entry['source_lang']} → {entry['target_lang']}"
+                )
+                lang_label.grid(row=row, column=5, padx=5, pady=5, sticky="nw")
+
+            # Clear history button
+            clear_btn = ctk.CTkButton(
+                self.history_window,
+                text="Clear History",
+                command=self.clear_history
+            )
+            clear_btn.pack(pady=10)
+
+    def clear_history(self):
+        """Geçmişi temizle"""
+        if messagebox.askyesno("Clear History", "Are you sure you want to clear the translation history?"):
+            self.translation_history.clear_history()
+            if self.history_window:
+                self.history_window.destroy()
+
+    def update_history_display(self):
+        """Geçmiş kayıtlarını güncelle"""
+        # Önce mevcut içeriği temizle
+        for widget in self.history_scroll.winfo_children():
+            widget.destroy()
+
+        # Geçmiş kayıtları getir
+        history = self.translation_history.get_history()
+
+        # Her kayıt için bir kart oluştur
+        for entry in history:
+            # Kart frame
+            card = ctk.CTkFrame(self.history_scroll, corner_radius=10)
+            card.pack(fill="x", padx=5, pady=3)
+            card.grid_columnconfigure(1, weight=1)
+
+            # Zaman
+            time_str = datetime.fromisoformat(entry['timestamp']).strftime("%H:%M:%S")
+            ctk.CTkLabel(
+                card,
+                text=time_str,
+                font=("Helvetica", 10),
+                text_color=("gray50", "gray70")
+            ).grid(row=0, column=0, padx=5, pady=2, sticky="w")
+
+            # OCR ve Translation Engine
+            engine_info = f"{entry['ocr_engine']} → {entry['translation_engine']}"
+            ctk.CTkLabel(
+                card,
+                text=engine_info,
+                font=("Helvetica", 9),
+                text_color=("gray50", "gray70")
+            ).grid(row=0, column=1, padx=5, pady=2, sticky="e")
+
+            # Kaynak metin
+            ctk.CTkLabel(
+                card,
+                text=entry['source_text'],
+                font=("Helvetica", 11),
+                wraplength=200,
+                justify="left"
+            ).grid(row=1, column=0, columnspan=2, padx=5, pady=(0,2), sticky="w")
+
+            # Çeviri
+            ctk.CTkLabel(
+                card,
+                text=entry['translated_text'],
+                font=("Helvetica", 11, "bold"),
+                wraplength=200,
+                justify="left"
+            ).grid(row=2, column=0, columnspan=2, padx=5, pady=(0,5), sticky="w")
+
+
+if __name__ == "__main__":
+    try:
+        translator = ScreenTranslator()
+        translator.run()
+    except Exception as e:
+        logging.critical(f"Unhandled exception: {e}")
+        logging.critical(traceback.format_exc())
+        raise
