@@ -36,13 +36,15 @@ class ScreenTranslator:
         self.translated_text = None
         self.region_status = None
         self.start_btn = None
-
+        
         # Variables
         self.source_lang = tk.StringVar(value="auto")
         self.target_lang = tk.StringVar(value="TR")
         self.ocr_choice = tk.StringVar(value="Tesseract")
         self.translation_engine = tk.StringVar(value="Local API")
-
+        self.topmost_var = tk.BooleanVar(value=True)
+        self.game_mode_var = tk.BooleanVar(value=False)
+        
         # Load theme from config
         theme_mode = self.config_manager.get_config('theme', 'mode', 'dark')
         ctk.set_appearance_mode(theme_mode.capitalize())
@@ -207,7 +209,7 @@ class ScreenTranslator:
         header_frame = ctk.CTkFrame(container, corner_radius=15)
         header_frame.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 20))
         header_frame.grid_columnconfigure(0, weight=1)  # Title
-        header_frame.grid_columnconfigure(1, weight=0)  # Theme switch
+        header_frame.grid_columnconfigure(1, weight=0)  # Switches
         
         # Title
         title = ctk.CTkLabel(
@@ -218,14 +220,36 @@ class ScreenTranslator:
         )
         title.grid(row=0, column=0, pady=20, padx=20, sticky="w")
 
+        # Switches frame (for theme and topmost)
+        switches_frame = ctk.CTkFrame(header_frame, fg_color="transparent")
+        switches_frame.grid(row=0, column=1, pady=20, padx=20, sticky="e")
+
         # Theme switch
         theme_switch = ctk.CTkSwitch(
-            header_frame,
+            switches_frame,
             text="Dark Mode",
             command=self.toggle_theme,
             variable=ctk.StringVar(value="on")
         )
-        theme_switch.grid(row=0, column=1, pady=20, padx=20, sticky="e")
+        theme_switch.pack(side="left", padx=(0, 10))
+
+        # Topmost switch - Use existing variable
+        topmost_switch = ctk.CTkSwitch(
+            switches_frame,
+            text="Always on Top",
+            command=self.toggle_topmost,
+            variable=self.topmost_var  # Use existing variable
+        )
+        topmost_switch.pack(side="left", padx=(0, 10))
+
+        # Game Mode switch - Use existing variable
+        game_mode_switch = ctk.CTkSwitch(
+            switches_frame,
+            text="Game Mode",
+            command=self.toggle_game_mode,
+            variable=self.game_mode_var  # Use existing variable
+        )
+        game_mode_switch.pack(side="left")
 
         # Settings frame
         settings_frame = ctk.CTkFrame(container, corner_radius=15)
@@ -665,15 +689,10 @@ class ScreenTranslator:
         self.translation_window = FlexibleTranslationWindow(self.root, self.config_manager)
         self.translated_text = self.translation_window.text_widget
         self.translation_window.protocol("WM_DELETE_WINDOW", self.stop_translation)
-
-    def update_translation_opacity(self, opacity):
-        """Update opacity of translation window"""
-        if self.translation_window and self.translation_window.winfo_exists():
-            self.translation_window.attributes('-alpha', opacity)
-
-    def on_translation_window_close(self):
-        # Stop translation when the translation window is closed
-        self.stop_translation()
+        
+        # Apply game mode if it's enabled
+        if hasattr(self, 'game_mode_var') and self.game_mode_var.get():
+            self.translation_window.set_game_mode(True)
 
     def update_translation_display(self, translated):
         """Update translation display"""
@@ -703,17 +722,6 @@ class ScreenTranslator:
         # Return to read-only state
         self.translated_text.configure(state="disabled")
 
-    def copy_translation(self):
-        """Copy translation to clipboard"""
-        self.translated_text.configure(state="normal")
-        translation = self.translated_text.get('1.0', tk.END).strip()
-        self.translated_text.configure(state="disabled")
-
-        if translation:
-            self.root.clipboard_clear()
-            self.root.clipboard_append(translation) 
-            messagebox.showinfo("Copied", "Translation copied to clipboard!")
-
     def change_translation_engine(self, engine_name):
         """Change the translation engine"""
         translation_manager.set_engine(engine_name)
@@ -726,11 +734,11 @@ class ScreenTranslator:
         self.config_manager.update_config('theme', 'mode', new_mode.lower())
 
     def update_opacity_value(self, value):
-        """Update opacity value and change label"""
+        """Update opacity value and label"""
         percentage = int(value)
         self.opacity_value_label.configure(text=f"{percentage}%")
         
-        # If translation window is open, update its opacity
+        # Directly update translation window opacity
         if hasattr(self, 'translation_window') and self.translation_window:
             if self.translation_window.winfo_exists():
                 self.translation_window.attributes('-alpha', percentage / 100)
@@ -821,6 +829,19 @@ class ScreenTranslator:
             self.translation_history.clear_history()
             if self.history_window:
                 self.history_window.destroy()
+
+    def toggle_topmost(self):
+        """Toggle topmost state of main window"""
+        is_topmost = self.topmost_var.get()
+        self.root.attributes('-topmost', is_topmost)
+        self._show_toast(f"Always on top: {'On' if is_topmost else 'Off'}")
+
+    def toggle_game_mode(self):
+        """Toggle game mode for translation window"""
+        is_game_mode = self.game_mode_var.get()
+        if self.translation_window and self.translation_window.winfo_exists():
+            self.translation_window.set_game_mode(is_game_mode)
+            self._show_toast(f"Game Mode: {'On' if is_game_mode else 'Off'}")
 
 
 if __name__ == "__main__":

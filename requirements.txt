@@ -10,3 +10,5 @@ torch==2.5.1
 winocr==0.0.15
 numpy>=1.24.0
 opencv-python>=4.10.0.84
+pywin32==306
+protobuf~=4.25.5

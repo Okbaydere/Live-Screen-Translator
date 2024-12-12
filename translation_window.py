@@ -1,5 +1,13 @@
 import tkinter as tk
 import customtkinter as ctk
+from ctypes import windll
+
+# Try to import win32 modules, if not available use ctypes
+try:
+    from win32 import win32gui, win32con
+    USE_WIN32 = True
+except ImportError:
+    USE_WIN32 = False
 
 class FlexibleTranslationWindow(ctk.CTkToplevel):
     def __init__(self, parent, config_manager):
@@ -69,6 +77,16 @@ class FlexibleTranslationWindow(ctk.CTkToplevel):
         self.title_bar.bind("<Button-1>", self.start_move)
         self.title_bar.bind("<B1-Motion>", self.on_move)
         
+        # Add game mode state
+        self.game_mode = False
+        
+        # Wait a bit for the window to be created and get its handle
+        self.after(100, self._initialize_window_handle)
+        
+    def _initialize_window_handle(self):
+        """Initialize window handle after window is fully created"""
+        self.hwnd = self.winfo_id()  # Get the actual window handle
+
     def start_move(self, event):
         self.x = event.x
         self.y = event.y
@@ -91,3 +109,39 @@ class FlexibleTranslationWindow(ctk.CTkToplevel):
     
     def on_closing(self):
         self.destroy() 
+
+    def set_game_mode(self, enabled):
+        """Enable or disable game mode (click-through window)"""
+        self.game_mode = enabled
+        
+        # Get the actual window handle (parent window handle)
+        hwnd = windll.user32.GetParent(self.winfo_id())
+        
+        if enabled:
+            # Make window click-through using ctypes
+            extended_style = windll.user32.GetWindowLongW(hwnd, -20)  # GWL_EXSTYLE
+            windll.user32.SetWindowLongW(
+                hwnd,
+                -20,  # GWL_EXSTYLE
+                extended_style | 0x80000 | 0x20  # WS_EX_LAYERED | WS_EX_TRANSPARENT
+            )
+            
+            # Disable all interactions
+            self.text_widget.configure(state="disabled")
+            self.copy_button.configure(state="disabled")
+            self.title_bar.unbind("<Button-1>")
+            self.title_bar.unbind("<B1-Motion>")
+            
+        else:
+            # Restore normal window
+            extended_style = windll.user32.GetWindowLongW(hwnd, -20)
+            windll.user32.SetWindowLongW(
+                hwnd,
+                -20,
+                extended_style & ~0x80000 & ~0x20  # Remove LAYERED and TRANSPARENT flags
+            )
+            
+            # Re-enable interactions
+            self.copy_button.configure(state="normal")
+            self.title_bar.bind("<Button-1>", self.start_move)
+            self.title_bar.bind("<B1-Motion>", self.on_move)
