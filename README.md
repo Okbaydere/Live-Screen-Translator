@@ -60,7 +60,7 @@ Real-time screen text translator with OCR. Capture and translate text from any a
    pip install -r requirements.txt   ```
 
 4. **Install Tesseract OCR**
-   - **Windows**: Download installer from [Tesseract at UB Mannheim](https://github.com/UB-Mannheim/tesseract/wiki)
+   - **Windows**: Download installer from (https://github.com/tesseract-ocr/tesseract)
    - **Linux**: `sudo apt-get install tesseract-ocr`
    - **MacOS**: `brew install tesseract`
 
