@@ -8,6 +8,7 @@ import winocr
 from PIL import Image
 import time
 from dotenv import load_dotenv
+import platform
 
 # Load environment variables
 load_dotenv()

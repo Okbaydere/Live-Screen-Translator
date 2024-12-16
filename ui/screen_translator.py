@@ -9,20 +9,24 @@ import customtkinter as ctk
 import asyncio
 import keyboard
 from datetime import datetime
+from retrying import retry
 
-from region_selector import RegionSelector
-from translation_worker import translate_text, translation_manager
-from config_manager import ConfigManager
-from ocr_manager import OCRManager
-from translation_window import FlexibleTranslationWindow
-from translation_history import TranslationHistory
+from core.region.region_selector import RegionSelector
+from core.translation.translation_worker import translate_text, translation_manager
+from core.config.config_manager import ConfigManager
+from core.ocr.ocr_manager import OCRManager
+from ui.translation_window import FlexibleTranslationWindow
+from core.translation.translation_history import TranslationHistory
+from ui.ui_builder import UIBuilder
+
 
 class ScreenTranslator:
     def __init__(self):
         self.root = ctk.CTk()
         self.config_manager = ConfigManager()
         self.ocr_manager = OCRManager()
-        
+        self.ui_builder = UIBuilder(self.root)
+
         # Instance attributes
         self.selected_region = None
         self.is_translating = False
@@ -37,16 +41,17 @@ class ScreenTranslator:
         self.region_status = None
         self.start_btn = None
         
-        # Variables
-        self.source_lang = tk.StringVar(value="auto")
-        self.target_lang = tk.StringVar(value="TR")
-        self.ocr_choice = tk.StringVar(value="Tesseract")
-        self.translation_engine = tk.StringVar(value="Local API")
-        self.topmost_var = tk.BooleanVar(value=True)
-        self.game_mode_var = tk.BooleanVar(value=False)
+        # Variables (ConfigManager'dan alınacak)
+        self.source_lang = tk.StringVar(value=self.config_manager.get_config('language', 'source', 'auto'))
+        self.target_lang = tk.StringVar(value=self.config_manager.get_config('language', 'target', 'TR'))
+        self.ocr_choice = tk.StringVar(value=self.config_manager.get_config('ocr', 'engine', 'Tesseract'))
+        self.translation_engine = tk.StringVar(value=self.config_manager.get_config('translation', 'engine', 'Gemini'))
+        self.topmost_var = tk.BooleanVar(value=self.config_manager.get_config('window', 'topmost', True))
+        self.game_mode_var = tk.BooleanVar(value=self.config_manager.get_config('window', 'game_mode', False))
+        self.global_shortcuts_enabled = tk.BooleanVar(value=self.config_manager.get_config('shortcuts', 'global', False))
         
-        # Load theme from config
-        theme_mode = self.config_manager.get_config('theme', 'mode', 'dark')
+        # Set theme from config
+        theme_mode = self.config_manager.get_config('theme', 'mode')
         ctk.set_appearance_mode(theme_mode.capitalize())
 
         self.error_count = 0
@@ -65,11 +70,10 @@ class ScreenTranslator:
         }
         
         # Global shortcuts state
-        self.global_shortcuts_enabled = tk.BooleanVar(value=False)
         self.global_hotkeys = {}  # Store registered global hotkeys
         
         self._initialize_application()
-
+        
     def _initialize_application(self):
         """Initialize the application components"""
         # Configure logging
@@ -80,21 +84,304 @@ class ScreenTranslator:
         self.root.title("Screen Text Translator")
         self.root.geometry("700x500")
         self.root.minsize(600, 450)
-        self.root.attributes('-topmost', True)
+        self.root.attributes('-topmost', self.topmost_var.get())
 
         # Register keyboard shortcuts
         self._register_shortcuts()
 
         # Create UI
         self.create_enhanced_ui()
+    
+    def create_enhanced_ui(self):
+        # Main container
+        container = self.ui_builder.create_frame(self.root, fg_color="transparent")
+        container.pack(padx=30, pady=20, fill="both", expand=True)
 
+        # Grid configuration
+        container.grid_columnconfigure(0, weight=2)
+        container.grid_columnconfigure(1, weight=3)
+        container.grid_rowconfigure(0, weight=0)
+        container.grid_rowconfigure(1, weight=1)
+
+        # Header section
+        header_frame = self.ui_builder.create_frame(container, corner_radius=15)
+        header_frame.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 20))
+        header_frame.grid_columnconfigure(0, weight=1)
+        header_frame.grid_columnconfigure(1, weight=0)
+
+        # Title
+        title = self.ui_builder.create_label(
+            header_frame,
+            text="Screen Text Translator",
+            font=("Helvetica", 24, "bold"),
+            text_color=("gray10", "gray90")
+        )
+        title.grid(row=0, column=0, pady=20, padx=20, sticky="w")
+
+        # Switches frame
+        switches_frame = self.ui_builder.create_frame(header_frame, fg_color="transparent")
+        switches_frame.grid(row=0, column=1, pady=20, padx=20, sticky="e")
+
+        # Theme switch
+        theme_switch = self.ui_builder.create_switch(
+            switches_frame,
+            text="Dark Mode",
+            command=self.toggle_theme,
+            variable=ctk.StringVar(value="on")
+        )
+        theme_switch.pack(side="left", padx=(0, 10))
+
+        # Topmost switch
+        topmost_switch = self.ui_builder.create_switch(
+            switches_frame,
+            text="Always on Top",
+            command=self.toggle_topmost,
+            variable=self.topmost_var  # Use existing variable
+        )
+        topmost_switch.pack(side="left", padx=(0, 10))
+        
+        # Game Mode switch
+        game_mode_switch = self.ui_builder.create_switch(
+            switches_frame,
+            text="Game Mode",
+            command=self.toggle_game_mode,
+            variable=self.game_mode_var  # Use existing variable
+        )
+        game_mode_switch.pack(side="left")
+        
+
+        # Settings frame
+        settings_frame = self.ui_builder.create_frame(container, corner_radius=15)
+        settings_frame.grid(row=1, column=0, sticky="nsew", padx=(0, 10))
+        settings_frame.grid_columnconfigure(0, weight=1)
+
+        # Settings title
+        settings_title = self.ui_builder.create_label(
+            settings_frame,
+            text="Settings",
+            font=("Helvetica", 16, "bold")
+        )
+        settings_title.grid(row=0, column=0, pady=(15,5), sticky="ew")
+
+        # Scrollable frame for settings
+        settings_scroll = self.ui_builder.create_scrollable_frame(
+            settings_frame,
+            corner_radius=10,
+            fg_color="transparent"
+        )
+        settings_scroll.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
+        settings_scroll.grid_columnconfigure(0, weight=1)
+        
+        settings_frame.grid_rowconfigure(1, weight=1)
+
+
+        # Opacity control
+        opacity_frame = self.ui_builder.create_frame(settings_scroll, corner_radius=10)
+        opacity_frame.grid(row=0, column=0, padx=5, pady=3, sticky="ew")
+        
+        opacity_label = self.ui_builder.create_label(
+            opacity_frame,
+            text="Translation Window Opacity",
+            font=("Helvetica", 12, "bold")
+        )
+        opacity_label.grid(row=0, column=0, pady=5, sticky="ew")
+        
+        self.opacity_value_label = self.ui_builder.create_label(
+            opacity_frame,
+            text="90%",
+            font=("Helvetica", 10)
+        )
+        self.opacity_value_label.grid(row=1, column=0, sticky="ew")
+        
+        self.opacity_slider = self.ui_builder.create_slider(
+            opacity_frame,
+            from_=20,
+            to=100,
+            number_of_steps=80,
+            command=self.update_opacity_value,
+        )
+        self.opacity_slider.grid(row=2, column=0, pady=(0, 10), padx=10, sticky="ew")
+        self.opacity_slider.set(90)
+
+        # Language settings
+        lang_frame = self.ui_builder.create_frame(settings_scroll, corner_radius=10)
+        lang_frame.grid(row=1, column=0, padx=5, pady=3, sticky="ew")
+        lang_frame.grid_columnconfigure(1, weight=1)
+        
+        self.ui_builder.create_label(
+            lang_frame,
+            text="Language Settings",
+            font=("Helvetica", 12, "bold")
+        ).grid(row=0, column=0, columnspan=2, pady=5, sticky="ew")
+        
+        self.ui_builder.create_label(
+            lang_frame,
+            text="Source:",
+            font=("Helvetica", 12)
+        ).grid(row=1, column=0, padx=5, pady=5)
+        
+        source_lang_dropdown = self.ui_builder.create_combobox(
+            lang_frame,
+            values=['auto', 'en', 'tr', 'de', 'fr', 'es', 'ru', 'ar', 'zh'],
+            variable=self.source_lang,
+            width=100
+        )
+        source_lang_dropdown.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
+        
+        self.ui_builder.create_label(
+            lang_frame,
+            text="Target:",
+            font=("Helvetica", 12)
+        ).grid(row=2, column=0, padx=5, pady=5)
+        
+        target_lang_dropdown = self.ui_builder.create_combobox(
+            lang_frame,
+            values=['tr', 'en', 'de', 'fr', 'es', 'ru', 'ar', 'zh'],
+            variable=self.target_lang,
+            width=100
+        )
+        target_lang_dropdown.grid(row=2, column=1, padx=5, pady=5, sticky="ew")
+
+        # OCR selection
+        ocr_frame = self.ui_builder.create_frame(settings_scroll, corner_radius=10)
+        ocr_frame.grid(row=2, column=0, padx=5, pady=3, sticky="ew")
+        ocr_frame.grid_columnconfigure(0, weight=1)
+        
+        self.ui_builder.create_label(
+            ocr_frame,
+            text="OCR Engine",
+            font=("Helvetica", 12, "bold")
+        ).grid(row=0, column=0, pady=5, sticky="ew")
+        
+        ocr_option_menu = self.ui_builder.create_combobox(
+            ocr_frame,
+            values=["Tesseract", "EasyOCR", "Windows OCR"],  # Add Windows OCR option
+            variable=self.ocr_choice,
+            width=150,
+            state="readonly"
+        )
+        ocr_option_menu.grid(row=1, column=0, pady=(0, 10), padx=10, sticky="ew")
+
+        # Translation Tool Selection
+        translation_engine_frame = self.ui_builder.create_frame(settings_scroll, corner_radius=10)
+        translation_engine_frame.grid(row=3, column=0, padx=5, pady=3, sticky="ew")
+        translation_engine_frame.grid_columnconfigure(0, weight=1)
+        
+        self.ui_builder.create_label(
+            translation_engine_frame,
+            text="Translation Engine",
+            font=("Helvetica", 12, "bold")
+        ).grid(row=0, column=0, pady=5, sticky="ew")
+        
+        engine_options = translation_manager.get_available_engines()
+        engine_menu = self.ui_builder.create_combobox(
+            translation_engine_frame,
+            values=engine_options,
+            variable=self.translation_engine,
+            command=self.change_translation_engine,
+            width=150,
+            state="readonly"
+        )
+        engine_menu.grid(row=1, column=0, pady=(0, 10), padx=10, sticky="ew")
+
+        # Add global shortcuts toggle in the shortcuts frame
+        shortcuts_frame = self.ui_builder.create_frame(settings_scroll, corner_radius=10)
+        shortcuts_frame.grid(row=4, column=0, padx=5, pady=3, sticky="ew")
+        shortcuts_frame.grid_columnconfigure(0, weight=1)
+        
+        # Header frame for title and toggle
+        header_frame = self.ui_builder.create_frame(shortcuts_frame, fg_color="transparent")
+        header_frame.grid(row=0, column=0, sticky="ew", padx=5, pady=5)
+        header_frame.grid_columnconfigure(1, weight=1)
+        
+        self.ui_builder.create_label(
+            header_frame,
+            text="Keyboard Shortcuts",
+            font=("Helvetica", 12, "bold")
+        ).grid(row=0, column=0, sticky="w")
+        
+        # Global shortcuts toggle
+        global_toggle = self.ui_builder.create_switch(
+            header_frame,
+            text="Global Shortcuts",
+            variable=self.global_shortcuts_enabled,
+            command=self.toggle_global_shortcuts,
+            width=60
+        )
+        global_toggle.grid(row=0, column=1, sticky="e")
+        
+        # Shortcuts list
+        shortcuts_text = "\n".join(
+            f"{shortcut.replace('<', '').replace('>', '')}: {desc}"
+            for shortcut, (desc, _) in self.shortcuts.items()
+        )
+        
+        self.ui_builder.create_label(
+            shortcuts_frame,
+            text=shortcuts_text,
+            font=("Helvetica", 10),
+            justify="left"
+        ).grid(row=1, column=0, pady=(0, 10), padx=10, sticky="w")
+
+        # Configure the right panel (main panel)
+        main_panel = self.ui_builder.create_frame(container, corner_radius=15)
+        main_panel.grid(row=1, column=1, sticky="nsew")
+        main_panel.grid_columnconfigure(0, weight=1)
+        main_panel.grid_rowconfigure(3, weight=1)
+
+        # Region selection button
+        select_btn = self.ui_builder.create_button(
+            main_panel,
+            text="Select Screen Region 📷",
+            command=self.select_screen_region,
+            height=45,
+            font=("Helvetica", 14),
+            fg_color=("#2B7539", "#1F5C2D"),
+            hover_color=("#235F2F", "#194B25")
+        )
+        select_btn.grid(row=0, column=0, pady=(20, 10), padx=30, sticky="ew")
+
+        # Status indicator
+        self.region_status = self.ui_builder.create_label(
+            main_panel,
+            text="No region selected",
+            text_color=("gray60", "gray70"),
+            font=("Helvetica", 12)
+        )
+        self.region_status.grid(row=1, column=0, pady=10, sticky="ew")
+
+        # Start/Stop button
+        self.start_btn = self.ui_builder.create_button(
+            main_panel,
+            text="Start Translation ▶️",
+            command=self.toggle_translation,
+            state="disabled",
+            height=50,
+            font=("Helvetica", 16, "bold"),
+            fg_color=("#2B5EA8", "#1F4475"),
+            hover_color=("#234B85", "#193A5E")
+        )
+        self.start_btn.grid(row=2, column=0, pady=(10, 10), padx=30, sticky="ew")
+
+        # Translation History button
+        history_btn = self.ui_builder.create_button(
+            main_panel,
+            text="Translation History 📜",
+            command=self.show_history_window,
+            height=45,
+            font=("Helvetica", 14),
+            fg_color=("#8B4513", "#654321"),  # Brown tones
+            hover_color=("#654321", "#543210")
+        )
+        history_btn.grid(row=3, column=0, pady=(10, 30), padx=30, sticky="ew")
+    
     def _register_shortcuts(self):
         """Register keyboard shortcuts"""
         if self.global_shortcuts_enabled.get():
             self._register_global_shortcuts()
         else:
             self._register_local_shortcuts()
-
+    
     def _register_local_shortcuts(self):
         """Register local (in-app) shortcuts"""
         for shortcut, (_, command) in self.shortcuts.items():
@@ -132,9 +419,10 @@ class ScreenTranslator:
         shortcut = shortcut.replace('control', 'ctrl')
         shortcut = shortcut.replace('-', '+')
         return shortcut
-
+    
     def toggle_global_shortcuts(self):
         """Toggle global shortcuts"""
+        self.config_manager.update_config('shortcuts', 'global', self.global_shortcuts_enabled.get())
         if self.global_shortcuts_enabled.get():
             self._register_global_shortcuts()
             self._show_toast("Global shortcuts enabled")
@@ -142,7 +430,7 @@ class ScreenTranslator:
             self._unregister_global_shortcuts()
             self._register_local_shortcuts()
             self._show_toast("Global shortcuts disabled")
-
+        
     def cycle_translation_engine(self):
         """Cycle through translation engines"""
         engines = translation_manager.get_available_engines()
@@ -167,7 +455,7 @@ class ScreenTranslator:
 
         # Inform user
         self._show_toast(f"Switched to {next_engine}")
-        
+
     def _show_toast(self, message, duration=1000):
         """Show temporary information message"""
         toast = ctk.CTkToplevel(self.root)
@@ -193,289 +481,7 @@ class ScreenTranslator:
         
         # Close after specified time
         toast.after(duration, toast.destroy)
-        
-    def create_enhanced_ui(self):
-        # Main container
-        container = ctk.CTkFrame(self.root, fg_color="transparent")
-        container.pack(padx=30, pady=20, fill="both", expand=True)
-        
-        # Grid configuration - Remove History panel
-        container.grid_columnconfigure(0, weight=2)  # Left panel
-        container.grid_columnconfigure(1, weight=3)  # Middle panel
-        container.grid_rowconfigure(0, weight=0)     # Header
-        container.grid_rowconfigure(1, weight=1)     # Main content
-
-        # Header section
-        header_frame = ctk.CTkFrame(container, corner_radius=15)
-        header_frame.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 20))
-        header_frame.grid_columnconfigure(0, weight=1)  # Title
-        header_frame.grid_columnconfigure(1, weight=0)  # Switches
-        
-        # Title
-        title = ctk.CTkLabel(
-            header_frame,
-            text="Screen Text Translator",
-            font=("Helvetica", 24, "bold"),
-            text_color=("gray10", "gray90")
-        )
-        title.grid(row=0, column=0, pady=20, padx=20, sticky="w")
-
-        # Switches frame (for theme and topmost)
-        switches_frame = ctk.CTkFrame(header_frame, fg_color="transparent")
-        switches_frame.grid(row=0, column=1, pady=20, padx=20, sticky="e")
-
-        # Theme switch
-        theme_switch = ctk.CTkSwitch(
-            switches_frame,
-            text="Dark Mode",
-            command=self.toggle_theme,
-            variable=ctk.StringVar(value="on")
-        )
-        theme_switch.pack(side="left", padx=(0, 10))
-
-        # Topmost switch - Use existing variable
-        topmost_switch = ctk.CTkSwitch(
-            switches_frame,
-            text="Always on Top",
-            command=self.toggle_topmost,
-            variable=self.topmost_var  # Use existing variable
-        )
-        topmost_switch.pack(side="left", padx=(0, 10))
-
-        # Game Mode switch - Use existing variable
-        game_mode_switch = ctk.CTkSwitch(
-            switches_frame,
-            text="Game Mode",
-            command=self.toggle_game_mode,
-            variable=self.game_mode_var  # Use existing variable
-        )
-        game_mode_switch.pack(side="left")
-
-        # Settings frame
-        settings_frame = ctk.CTkFrame(container, corner_radius=15)
-        settings_frame.grid(row=1, column=0, sticky="nsew", padx=(0, 10))
-        settings_frame.grid_columnconfigure(0, weight=1)
-        
-        # Settings title
-        settings_title = ctk.CTkLabel(
-            settings_frame,
-            text="Settings",
-            font=("Helvetica", 16, "bold")
-        )
-        settings_title.grid(row=0, column=0, pady=(15,5), sticky="ew")
-
-        # Scrollable frame for settings
-        settings_scroll = ctk.CTkScrollableFrame(
-            settings_frame,
-            corner_radius=10,
-            fg_color="transparent"
-        )
-        settings_scroll.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
-        settings_scroll.grid_columnconfigure(0, weight=1)
-        
-        # Make settings frame scrollable
-        settings_frame.grid_rowconfigure(1, weight=1)
-
-        # Opacity control
-        opacity_frame = ctk.CTkFrame(settings_scroll, corner_radius=10)
-        opacity_frame.grid(row=0, column=0, padx=5, pady=3, sticky="ew")
-        
-        opacity_label = ctk.CTkLabel(
-            opacity_frame,
-            text="Translation Window Opacity",
-            font=("Helvetica", 12, "bold")
-        )
-        opacity_label.grid(row=0, column=0, pady=5, sticky="ew")
-        
-        self.opacity_value_label = ctk.CTkLabel(
-            opacity_frame,
-            text="90%",
-            font=("Helvetica", 10)
-        )
-        self.opacity_value_label.grid(row=1, column=0, sticky="ew")
-        
-        self.opacity_slider = ctk.CTkSlider(
-            opacity_frame,
-            from_=20,
-            to=100,
-            number_of_steps=80,
-            command=self.update_opacity_value,
-        )
-        self.opacity_slider.grid(row=2, column=0, pady=(0, 10), padx=10, sticky="ew")
-        self.opacity_slider.set(90)
-
-        # Language settings
-        lang_frame = ctk.CTkFrame(settings_scroll, corner_radius=10)
-        lang_frame.grid(row=1, column=0, padx=5, pady=3, sticky="ew")
-        lang_frame.grid_columnconfigure(1, weight=1)
-        
-        ctk.CTkLabel(
-            lang_frame,
-            text="Language Settings",
-            font=("Helvetica", 12, "bold")
-        ).grid(row=0, column=0, columnspan=2, pady=5, sticky="ew")
-        
-        ctk.CTkLabel(
-            lang_frame,
-            text="Source:",
-            font=("Helvetica", 12)
-        ).grid(row=1, column=0, padx=5, pady=5)
-        
-        source_lang_dropdown = ctk.CTkComboBox(
-            lang_frame,
-            values=['auto', 'en', 'tr', 'de', 'fr', 'es', 'ru', 'ar', 'zh'],
-            variable=self.source_lang,
-            width=100
-        )
-        source_lang_dropdown.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
-        
-        ctk.CTkLabel(
-            lang_frame,
-            text="Target:",
-            font=("Helvetica", 12)
-        ).grid(row=2, column=0, padx=5, pady=5)
-        
-        target_lang_dropdown = ctk.CTkComboBox(
-            lang_frame,
-            values=['tr', 'en', 'de', 'fr', 'es', 'ru', 'ar', 'zh'],
-            variable=self.target_lang,
-            width=100
-        )
-        target_lang_dropdown.grid(row=2, column=1, padx=5, pady=5, sticky="ew")
-
-        # OCR selection
-        ocr_frame = ctk.CTkFrame(settings_scroll, corner_radius=10)
-        ocr_frame.grid(row=2, column=0, padx=5, pady=3, sticky="ew")
-        ocr_frame.grid_columnconfigure(0, weight=1)
-        
-        ctk.CTkLabel(
-            ocr_frame,
-            text="OCR Engine",
-            font=("Helvetica", 12, "bold")
-        ).grid(row=0, column=0, pady=5, sticky="ew")
-        
-        ocr_option_menu = ctk.CTkComboBox(
-            ocr_frame,
-            values=["Tesseract", "EasyOCR", "Windows OCR"],  # Add Windows OCR option
-            variable=self.ocr_choice,
-            width=150,
-            state="readonly"
-        )
-        ocr_option_menu.grid(row=1, column=0, pady=(0, 10), padx=10, sticky="ew")
-
-        # Translation Tool Selection
-        translation_engine_frame = ctk.CTkFrame(settings_scroll, corner_radius=10)
-        translation_engine_frame.grid(row=3, column=0, padx=5, pady=3, sticky="ew")
-        translation_engine_frame.grid_columnconfigure(0, weight=1)
-        
-        ctk.CTkLabel(
-            translation_engine_frame,
-            text="Translation Engine",
-            font=("Helvetica", 12, "bold")
-        ).grid(row=0, column=0, pady=5, sticky="ew")
-        
-        engine_options = translation_manager.get_available_engines()
-        engine_menu = ctk.CTkComboBox(
-            translation_engine_frame,
-            values=engine_options,
-            variable=self.translation_engine,
-            command=self.change_translation_engine,
-            width=150,
-            state="readonly"
-        )
-        engine_menu.grid(row=1, column=0, pady=(0, 10), padx=10, sticky="ew")
-
-        # Add global shortcuts toggle in the shortcuts frame
-        shortcuts_frame = ctk.CTkFrame(settings_scroll, corner_radius=10)
-        shortcuts_frame.grid(row=4, column=0, padx=5, pady=3, sticky="ew")
-        shortcuts_frame.grid_columnconfigure(0, weight=1)
-        
-        # Header frame for title and toggle
-        header_frame = ctk.CTkFrame(shortcuts_frame, fg_color="transparent")
-        header_frame.grid(row=0, column=0, sticky="ew", padx=5, pady=5)
-        header_frame.grid_columnconfigure(1, weight=1)
-        
-        ctk.CTkLabel(
-            header_frame,
-            text="Keyboard Shortcuts",
-            font=("Helvetica", 12, "bold")
-        ).grid(row=0, column=0, sticky="w")
-        
-        # Global shortcuts toggle
-        global_toggle = ctk.CTkSwitch(
-            header_frame,
-            text="Global Shortcuts",
-            variable=self.global_shortcuts_enabled,
-            command=self.toggle_global_shortcuts,
-            width=60
-        )
-        global_toggle.grid(row=0, column=1, sticky="e")
-        
-        # Shortcuts list
-        shortcuts_text = "\n".join(
-            f"{shortcut.replace('<', '').replace('>', '')}: {desc}"
-            for shortcut, (desc, _) in self.shortcuts.items()
-        )
-        
-        ctk.CTkLabel(
-            shortcuts_frame,
-            text=shortcuts_text,
-            font=("Helvetica", 10),
-            justify="left"
-        ).grid(row=1, column=0, pady=(0, 10), padx=10, sticky="w")
-
-        # Configure the right panel (main panel)
-        main_panel = ctk.CTkFrame(container, corner_radius=15)
-        main_panel.grid(row=1, column=1, sticky="nsew")
-        main_panel.grid_columnconfigure(0, weight=1)
-        main_panel.grid_rowconfigure(3, weight=1)  # Space between buttons
-
-        # Region selection button
-        select_btn = ctk.CTkButton(
-            main_panel,
-            text="Select Screen Region 📷",
-            command=self.select_screen_region,
-            height=45,
-            font=("Helvetica", 14),
-            fg_color=("#2B7539", "#1F5C2D"),
-            hover_color=("#235F2F", "#194B25")
-        )
-        select_btn.grid(row=0, column=0, pady=(20, 10), padx=30, sticky="ew")
-
-        # Status indicator
-        self.region_status = ctk.CTkLabel(
-            main_panel,
-            text="No region selected",
-            text_color=("gray60", "gray70"),
-            font=("Helvetica", 12)
-        )
-        self.region_status.grid(row=1, column=0, pady=10, sticky="ew")
-
-        # Start/Stop button
-        self.start_btn = ctk.CTkButton(
-            main_panel,
-            text="Start Translation ▶️",
-            command=self.toggle_translation,
-            state="disabled",
-            height=50,
-            font=("Helvetica", 16, "bold"),
-            fg_color=("#2B5EA8", "#1F4475"),
-            hover_color=("#234B85", "#193A5E")
-        )
-        self.start_btn.grid(row=2, column=0, pady=(10, 10), padx=30, sticky="ew")
-
-        # Translation History button
-        history_btn = ctk.CTkButton(
-            main_panel,
-            text="Translation History 📜",
-            command=self.show_history_window,
-            height=45,
-            font=("Helvetica", 14),
-            fg_color=("#8B4513", "#654321"),  # Brown tones
-            hover_color=("#654321", "#543210")
-        )
-        history_btn.grid(row=3, column=0, pady=(10, 30), padx=30, sticky="ew")
-
+    
     @staticmethod
     def update_button(button, text, fg_color, hover_color):
         """Update button text and colors."""
@@ -639,8 +645,8 @@ class ScreenTranslator:
         else:
             self.stop_translation()
 
+    @retry(stop_max_attempt_number=3, wait_fixed=1000)
     def translation_worker(self):
-        # Create event loop
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         
@@ -674,11 +680,8 @@ class ScreenTranslator:
                 
             except Exception as exc:
                 logging.error(f"Translation error: {exc}")
-                self.root.after(0, lambda: messagebox.showerror("Error", str(exc)))
-                self.stop_translation()
-                break
+                raise  # retry decorator will handle this
         
-        # Close event loop
         loop.close()
 
     def create_translation_window(self):
@@ -726,9 +729,9 @@ class ScreenTranslator:
         """Change the translation engine"""
         translation_manager.set_engine(engine_name)
         logging.info(f"Translation engine changed to: {engine_name}")
+        self.config_manager.update_config('translation', 'engine', engine_name)
 
     def toggle_theme(self):
-        """Simplified theme toggle"""
         new_mode = "Light" if ctk.get_appearance_mode() == "Dark" else "Dark"
         ctk.set_appearance_mode(new_mode)
         self.config_manager.update_config('theme', 'mode', new_mode.lower())
@@ -831,24 +834,16 @@ class ScreenTranslator:
                 self.history_window.destroy()
 
     def toggle_topmost(self):
-        """Toggle topmost state of main window"""
         is_topmost = self.topmost_var.get()
         self.root.attributes('-topmost', is_topmost)
+        self.config_manager.update_config('window', 'topmost', is_topmost)
         self._show_toast(f"Always on top: {'On' if is_topmost else 'Off'}")
 
     def toggle_game_mode(self):
-        """Toggle game mode for translation window"""
         is_game_mode = self.game_mode_var.get()
         if self.translation_window and self.translation_window.winfo_exists():
             self.translation_window.set_game_mode(is_game_mode)
+            self.config_manager.update_config('window', 'game_mode', is_game_mode)
             self._show_toast(f"Game Mode: {'On' if is_game_mode else 'Off'}")
 
 
-if __name__ == "__main__":
-    try:
-        translator = ScreenTranslator()
-        translator.run()
-    except Exception as e:
-        logging.critical(f"Unhandled exception: {e}")
-        logging.critical(traceback.format_exc())
-        raise
