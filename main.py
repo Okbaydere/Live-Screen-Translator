@@ -1,16 +1,16 @@
+import sys
 import logging
 import traceback
-from ui.screen_translator import ScreenTranslator
+from ui.app_core import AppCore
 
 def main():
     try:
-        translator = ScreenTranslator()
-        translator.run()
+        app = AppCore()
+        app.run()
     except Exception as e:
-        logging.critical(f"Unhandled exception: {e}")
+        logging.critical(f"Fatal error: {e}")
         logging.critical(traceback.format_exc())
-        raise
+        sys.exit(1)
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
     main() 
