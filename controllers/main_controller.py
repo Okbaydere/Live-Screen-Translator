@@ -1,6 +1,6 @@
 import logging
 import customtkinter as ctk
-from typing import Optional
+
 
 from models.translation_model import TranslationModel
 from models.config_model import ConfigModel
@@ -17,7 +17,7 @@ class MainController(MainViewProtocol):
         
         # Initialize models
         self.config_model = ConfigModel()
-        self.translation_model = TranslationModel()
+        self.translation_model = TranslationModel(config_model=self.config_model)
         self.ocr_model = OCRModel()
         
         # Initialize controllers
@@ -239,53 +239,39 @@ class MainController(MainViewProtocol):
             logging.error(f"Error changing opacity: {e}")
             self.main_view.show_error("Error", str(e))
             
-    def on_change_translation_engine(self, engine: str):
-        """Handle translation engine change request"""
+    def on_change_translation_engine(self, engine_name: str):
+        """Handle translation engine change"""
         try:
-            # Schedule the engine change in the main thread
-            def change_engine():
-                try:
-                    # Store current translation state
-                    was_translating = hasattr(self.translation_controller, 'is_translating') and self.translation_controller.is_translating
-                    
-                    # Change engine without stopping translation
-                    self.translation_controller.change_translation_engine(engine)
-                    self.main_view.show_toast(f"Translation engine changed to {engine}")
-                    
-                except Exception as e:
-                    logging.error(f"Error changing translation engine: {e}")
-                    self.main_view.show_error("Error", str(e))
+            # Store current translation state
+            is_translating = hasattr(self.translation_controller, 'is_translating') and self.translation_controller.is_translating
             
-            # Execute in main thread
-            self.root.after(0, change_engine)
+            # Change engine
+            self.translation_controller.change_translation_engine(engine_name)
             
+            # Restore translation state if needed
+            if is_translating:
+                self.translation_controller.start_translation()
+                
         except Exception as e:
-            logging.error(f"Error scheduling translation engine change: {e}")
-            self.main_view.show_error("Error", str(e))
+            logging.error(f"Error changing translation engine: {e}")
+            self.main_view.show_error("Error", f"Failed to change translation engine: {e}")
             
-    def on_change_ocr_engine(self, engine: str):
-        """Handle OCR engine change request"""
+    def on_change_ocr_engine(self, engine_name: str):
+        """Handle OCR engine change"""
         try:
-            # Schedule the engine change in the main thread
-            def change_engine():
-                try:
-                    # Store current translation state
-                    was_translating = hasattr(self.translation_controller, 'is_translating') and self.translation_controller.is_translating
-                    
-                    # Change engine without stopping translation
-                    self.translation_controller.change_ocr_engine(engine)
-                    self.main_view.show_toast(f"OCR engine changed to {engine}")
-                    
-                except Exception as e:
-                    logging.error(f"Error changing OCR engine: {e}")
-                    self.main_view.show_error("Error", str(e))
+            # Store current translation state
+            is_translating = hasattr(self.translation_controller, 'is_translating') and self.translation_controller.is_translating
             
-            # Execute in main thread
-            self.root.after(0, change_engine)
+            # Change engine
+            self.translation_controller.change_ocr_engine(engine_name)
             
+            # Restore translation state if needed
+            if is_translating:
+                self.translation_controller.start_translation()
+                
         except Exception as e:
-            logging.error(f"Error scheduling OCR engine change: {e}")
-            self.main_view.show_error("Error", str(e))
+            logging.error(f"Error changing OCR engine: {e}")
+            self.main_view.show_error("Error", f"Failed to change OCR engine: {e}")
             
     def on_toggle_global_shortcuts(self, enabled: bool):
         """Handle global shortcuts toggle request"""
@@ -299,8 +285,11 @@ class MainController(MainViewProtocol):
     def cleanup(self):
         """Clean up resources before exit"""
         try:
-            self.translation_controller.stop_translation()
+            # First disable global shortcuts
             self.shortcut_controller.cleanup()
+            
+            # Then stop translation and clean up other resources
+            self.translation_controller.stop_translation()
             self.window_controller.cleanup()
             self.history_controller.cleanup()
         except Exception as e:
@@ -352,6 +341,6 @@ class MainController(MainViewProtocol):
         """Handle translation stopped event"""
         self.main_view.update_translation_status(
             "Translation: Stopped",
-            "gray"
+            ("#808080", "#666666")  # Light gray and dark gray for normal/hover states
         )
         self.main_view.set_translation_button_state(False)

@@ -1,6 +1,6 @@
+from typing import Protocol, Union
+
 import customtkinter as ctk
-from typing import Protocol, Optional
-import logging
 
 try:
     from CTkMessagebox import CTkMessagebox
@@ -75,11 +75,59 @@ class MainView:
         self._create_control_panel()
         self._create_status_panel()
         
+    @staticmethod
+    def _create_section_frame(parent: Union[ctk.CTkFrame, ctk.CTkScrollableFrame], title: str) -> ctk.CTkFrame:
+        """Create a section frame with title"""
+        frame = ctk.CTkFrame(parent)
+        frame.pack(fill="x", padx=5, pady=5)
+        
+        if title:
+            ctk.CTkLabel(frame, text=title, font=("Arial", 12, "bold")).pack(anchor="w", padx=5, pady=2)
+            
+        return frame
+        
+    @staticmethod
+    def _create_labeled_option_menu(parent: Union[ctk.CTkFrame, ctk.CTkScrollableFrame], label: str, 
+                                  variable: ctk.StringVar, values: list[str], command, width: int = 120) -> ctk.CTkOptionMenu:
+        """Create a labeled option menu"""
+        frame = ctk.CTkFrame(parent)
+        frame.pack(fill="x", padx=5, pady=2)
+        
+        ctk.CTkLabel(frame, text=label).pack(side="left", padx=5)
+        menu = ctk.CTkOptionMenu(
+            frame,
+            variable=variable,
+            values=values,
+            command=command,
+            width=width
+        )
+        menu.pack(side="right", padx=5)
+        return menu
+        
+    @staticmethod
+    def _create_shortcut_label(parent: Union[ctk.CTkFrame, ctk.CTkScrollableFrame], key: str, description: str) -> ctk.CTkLabel:
+        """Create a shortcut label with consistent formatting"""
+        return ctk.CTkLabel(
+            parent,
+            text=f"{key:<15} - {description}",
+            font=("Arial", 11),
+            justify="left"
+        )
+        
+    @staticmethod
+    def _create_status_label(parent: Union[ctk.CTkFrame, ctk.CTkScrollableFrame], text: str, 
+                           text_color: str | tuple = "gray") -> ctk.CTkLabel:
+        """Create a status label with consistent formatting"""
+        return ctk.CTkLabel(
+            parent,
+            text=text,
+            text_color=text_color
+        )
+        
     def _create_control_panel(self):
         """Create control panel with buttons and settings"""
         # Main Controls Section
-        main_controls = ctk.CTkFrame(self.control_panel)
-        main_controls.pack(fill="x", padx=5, pady=5)
+        main_controls = self._create_section_frame(self.control_panel, "")
         
         # Region selection and translation buttons
         self.region_btn = ctk.CTkButton(
@@ -98,10 +146,7 @@ class MainView:
         self.translation_btn.pack(fill="x", padx=5, pady=5)
         
         # Window Settings Section
-        window_frame = ctk.CTkFrame(self.control_panel)
-        window_frame.pack(fill="x", padx=5, pady=5)
-        
-        ctk.CTkLabel(window_frame, text="Window Settings", font=("Arial", 12, "bold")).pack(anchor="w", padx=5, pady=2)
+        window_frame = self._create_section_frame(self.control_panel, "Window Settings")
         
         # Create a sub-frame for switches
         switches_frame = ctk.CTkFrame(window_frame)
@@ -134,94 +179,62 @@ class MainView:
         self.opacity_var = ctk.DoubleVar(value=0.9)
         opacity_slider = ctk.CTkSlider(
             opacity_frame,
-            from_=0.1,
-            to=1.0,
-            variable=self.opacity_var,
-            command=lambda value: self.controller.on_change_opacity(float(value))
+            from_=10,  # 10% minimum
+            to=100,    # 100% maximum
+            variable=None,  # Don't bind directly to avoid type issues
+            command=self._on_opacity_change
         )
+        opacity_slider.set(self.opacity_var.get() * 100)  # Convert to percentage
         opacity_slider.pack(side="left", fill="x", expand=True, padx=5)
         
         # Language Settings Section
-        lang_frame = ctk.CTkFrame(self.control_panel)
-        lang_frame.pack(fill="x", padx=5, pady=5)
-        
-        ctk.CTkLabel(lang_frame, text="Language Settings", font=("Arial", 12, "bold")).pack(anchor="w", padx=5, pady=2)
+        lang_frame = self._create_section_frame(self.control_panel, "Language Settings")
         
         # Source language
-        source_frame = ctk.CTkFrame(lang_frame)
-        source_frame.pack(fill="x", padx=5, pady=2)
-        
-        ctk.CTkLabel(source_frame, text="Source:").pack(side="left", padx=5)
         self.source_lang = ctk.StringVar(value="auto")
-        source_langs = ["auto", "en", "ja", "ko", "zh", "tr", "fr", "de", "es", "it"]
-        source_menu = ctk.CTkOptionMenu(
-            source_frame,
-            variable=self.source_lang,
-            values=source_langs,
-            command=self.controller.on_change_source_language,
-            width=120
+        self._create_labeled_option_menu(
+            lang_frame,
+            "Source:",
+            self.source_lang,
+            ["auto", "en", "ja", "ko", "zh", "tr", "fr", "de", "es", "it"],
+            self.controller.on_change_source_language
         )
-        source_menu.pack(side="right", padx=5)
         
         # Target language
-        target_frame = ctk.CTkFrame(lang_frame)
-        target_frame.pack(fill="x", padx=5, pady=2)
-        
-        ctk.CTkLabel(target_frame, text="Target:").pack(side="left", padx=5)
         self.target_lang = ctk.StringVar(value="en")
-        target_langs = ["en", "ja", "ko", "zh", "tr", "fr", "de", "es", "it"]
-        target_menu = ctk.CTkOptionMenu(
-            target_frame,
-            variable=self.target_lang,
-            values=target_langs,
-            command=self.controller.on_change_target_language,
-            width=120
+        self._create_labeled_option_menu(
+            lang_frame,
+            "Target:",
+            self.target_lang,
+            ["en", "ja", "ko", "zh", "tr", "fr", "de", "es", "it"],
+            self.controller.on_change_target_language
         )
-        target_menu.pack(side="right", padx=5)
         
         # Engine Settings Section
-        engine_frame = ctk.CTkFrame(self.control_panel)
-        engine_frame.pack(fill="x", padx=5, pady=5)
-        
-        ctk.CTkLabel(engine_frame, text="Engine Settings", font=("Arial", 12, "bold")).pack(anchor="w", padx=5, pady=2)
+        engine_frame = self._create_section_frame(self.control_panel, "Engine Settings")
         
         # Translation engine
-        trans_engine_frame = ctk.CTkFrame(engine_frame)
-        trans_engine_frame.pack(fill="x", padx=5, pady=2)
-        
-        ctk.CTkLabel(trans_engine_frame, text="Translator:").pack(side="left", padx=5)
         self.translation_engine = ctk.StringVar(value="Gemini")
-        engines = ["Gemini", "Google Translate", "Local API"]
-        translation_menu = ctk.CTkOptionMenu(
-            trans_engine_frame,
-            variable=self.translation_engine,
-            values=engines,
-            command=self.controller.on_change_translation_engine,
-            width=120
+        self._create_labeled_option_menu(
+            engine_frame,
+            "Translator:",
+            self.translation_engine,
+            ["Gemini", "Google Translate", "Local API"],
+            self.controller.on_change_translation_engine
         )
-        translation_menu.pack(side="right", padx=5)
         
         # OCR engine
-        ocr_engine_frame = ctk.CTkFrame(engine_frame)
-        ocr_engine_frame.pack(fill="x", padx=5, pady=2)
-        
-        ctk.CTkLabel(ocr_engine_frame, text="OCR:").pack(side="left", padx=5)
         self.ocr_engine = ctk.StringVar(value="Tesseract")
-        ocr_engines = ["Tesseract", "EasyOCR", "Windows OCR"]
-        ocr_menu = ctk.CTkOptionMenu(
-            ocr_engine_frame,
-            variable=self.ocr_engine,
-            values=ocr_engines,
-            command=self.controller.on_change_ocr_engine,
-            width=120
+        self._create_labeled_option_menu(
+            engine_frame,
+            "OCR:",
+            self.ocr_engine,
+            ["Tesseract", "EasyOCR", "Windows OCR"],
+            self.controller.on_change_ocr_engine
         )
-        ocr_menu.pack(side="right", padx=5)
         
         # Additional Settings Section
-        additional_frame = ctk.CTkFrame(self.control_panel)
-        additional_frame.pack(fill="x", padx=5, pady=5)
-        
-        ctk.CTkLabel(additional_frame, text="Additional Settings", font=("Arial", 12, "bold")).pack(anchor="w", padx=5, pady=2)
+        additional_frame = self._create_section_frame(self.control_panel, "Additional Settings")
         
         self.shortcuts_var = ctk.BooleanVar(value=True)
         shortcuts_switch = ctk.CTkSwitch(
@@ -233,8 +246,7 @@ class MainView:
         shortcuts_switch.pack(anchor="w", padx=5, pady=5)
         
         # History button at the bottom
-        history_frame = ctk.CTkFrame(self.control_panel)
-        history_frame.pack(fill="x", padx=5, pady=5)
+        history_frame = self._create_section_frame(self.control_panel, "")
         
         self.history_btn = ctk.CTkButton(
             history_frame,
@@ -249,17 +261,17 @@ class MainView:
         status_frame = ctk.CTkFrame(self.status_panel)
         status_frame.pack(fill="x", padx=5, pady=5)
         
-        self.region_status = ctk.CTkLabel(
+        self.region_status = self._create_status_label(
             status_frame,
-            text="❌ No region selected",
-            text_color=("#C42B2B", "#8B1F1F")
+            "❌ No region selected",
+            ("#C42B2B", "#8B1F1F")
         )
         self.region_status.pack(anchor="w", padx=5, pady=2)
         
-        self.translation_status = ctk.CTkLabel(
+        self.translation_status = self._create_status_label(
             status_frame,
-            text="Translation: Idle",
-            text_color="gray"
+            "Translation: Idle",
+            "gray"
         )
         self.translation_status.pack(anchor="w", padx=5, pady=2)
         
@@ -282,19 +294,18 @@ class MainView:
         ]
         
         for key, description in shortcuts:
-            shortcut_label = ctk.CTkLabel(
+            shortcut_label = self._create_shortcut_label(
                 shortcuts_frame,
-                text=f"{key:<15} - {description}",
-                font=("Arial", 11),
-                justify="left"
+                key,
+                description
             )
             shortcut_label.pack(anchor="w", padx=5, pady=1)
         
         # Toast notification
-        self.toast_label = ctk.CTkLabel(
+        self.toast_label = self._create_status_label(
             status_frame,
-            text="",
-            text_color="gray"
+            "",
+            "gray"
         )
         self.toast_label.pack(anchor="w", padx=5, pady=2)
         
@@ -349,4 +360,10 @@ class MainView:
     def cleanup(self):
         """Clean up resources"""
         pass
+        
+    def _on_opacity_change(self, value: float):
+        """Handle opacity slider change"""
+        opacity = float(value) / 100  # Convert percentage to 0-1 range
+        self.opacity_var.set(opacity)
+        self.controller.on_change_opacity(opacity)
         

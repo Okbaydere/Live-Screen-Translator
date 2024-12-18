@@ -1,18 +1,18 @@
+import asyncio
 import logging
 import threading
-import time
 import traceback
-import asyncio
-from datetime import datetime
-from typing import Optional, Tuple
-from PIL import Image, ImageGrab
-import customtkinter as ctk
+from typing import Optional
 
-from models.translation_model import TranslationModel, TranslationEntry
+import customtkinter as ctk
+from PIL import ImageGrab
+
 from models.config_model import ConfigModel
 from models.ocr_model import OCRModel
 from models.region_model import RegionModel
+from models.translation_model import TranslationModel
 from views.windows.translation_window import TranslationWindow, TranslationWindowProtocol
+
 
 class TranslationController(TranslationWindowProtocol):
     def __init__(self, root: ctk.CTk, translation_model: TranslationModel, 
@@ -145,60 +145,75 @@ class TranslationController(TranslationWindowProtocol):
         finally:
             loop.close()
             
+    async def _check_translation_window(self) -> bool:
+        """Check if translation window exists and is valid"""
+        if not self.translation_window:
+            logging.warning("Translation window does not exist, stopping translation")
+            self.stop_translation()
+            return False
+        return True
+
+    async def _process_and_translate(self, screenshot) -> Optional[tuple[str, str]]:
+        """Process image with OCR and translate the text"""
+        source_lang = self.config_model.get_config('translation', 'source_lang', 'auto')
+        ocr_text = await self.ocr_model.process_image(screenshot, source_lang)
+        
+        if not ocr_text or ocr_text == self._last_ocr_text:
+            return None
+        
+        self._last_ocr_text = ocr_text
+        target_lang = self.config_model.get_config('translation', 'target_lang', 'en')
+        translated_text = await self._translate_text(ocr_text, source_lang, target_lang)
+        
+        if not translated_text:
+            return None
+        
+        return ocr_text, translated_text
+
+    async def _update_window_and_history(self, ocr_text: str, translated_text: str):
+        """Update translation window and add to history"""
+        if not self.translation_window.winfo_exists():
+            logging.warning("Translation window was destroyed, stopping translation")
+            self.stop_translation()
+            return False
+        
+        try:
+            self.root.after(0, lambda t=translated_text: self._update_translation_window(t))
+        except Exception as e:
+            logging.error(f"Error updating translation window: {e}")
+            return False
+        
+        source_lang = self.config_model.get_config('translation', 'source_lang', 'auto')
+        target_lang = self.config_model.get_config('translation', 'target_lang', 'en')
+        
+        self.translation_model.add_to_history(
+            source_text=ocr_text,
+            translated_text=translated_text,
+            source_lang=source_lang,
+            target_lang=target_lang
+        )
+        return True
+
     async def _translation_worker(self):
         """Worker function for translation"""
         try:
             while self.is_translating:
-                # Get screenshot of selected region
+                if not await self._check_translation_window():
+                    break
+                
                 screenshot = await self._capture_region()
                 if screenshot is None:
                     continue
-                    
-                # Process image with OCR
-                source_lang = self.config_model.get_config('translation', 'source_lang', 'auto')
-                ocr_text = await self.ocr_model.process_image(screenshot, source_lang)
                 
-                if not ocr_text:
+                result = await self._process_and_translate(screenshot)
+                if result is None:
                     await asyncio.sleep(0.1)
                     continue
-                    
-                # Only translate if text has changed
-                if ocr_text == self._last_ocr_text:
-                    await asyncio.sleep(0.1)
-                    continue
-                    
-                self._last_ocr_text = ocr_text
                 
-                # Get target language from config
-                target_lang = self.config_model.get_config('translation', 'target_lang', 'en')
+                ocr_text, translated_text = result
+                if not await self._update_window_and_history(ocr_text, translated_text):
+                    break
                 
-                # Translate text
-                translated_text = await self._translate_text(ocr_text, source_lang, target_lang)
-                
-                if not translated_text:
-                    continue
-                    
-                # Update translation window
-                if self.translation_window:
-                    self.root.after(0, lambda t=translated_text: self.translation_window.set_text(t))
-                    
-                # Add to history
-                entry = TranslationEntry(
-                    source_text=ocr_text,
-                    translated_text=translated_text,
-                    source_lang=source_lang,
-                    target_lang=target_lang,
-                    translation_engine=self.translation_model.get_current_engine(),
-                    timestamp=datetime.now()
-                )
-                self.translation_model.add_to_history(
-                    source_text=ocr_text,
-                    translated_text=translated_text,
-                    source_lang=source_lang,
-                    target_lang=target_lang
-                )
-                
-                # Small delay to prevent high CPU usage
                 await asyncio.sleep(0.1)
                 
         except asyncio.CancelledError:
@@ -288,11 +303,15 @@ class TranslationController(TranslationWindowProtocol):
         self.translation_model.clear_history() 
         
     def _update_translation_window(self, text: str):
-        """Update translation window text and ensure visibility"""
-        if self.translation_window:
-            self.translation_window.set_text(text)
-            self.translation_window.lift()  # Ensure window stays on top
-            self.translation_window.focus_force()  # Force focus to keep window visible
+        """Update translation window text safely"""
+        try:
+            if self.translation_window and self.translation_window.winfo_exists():
+                self.translation_window.set_text(text)
+                self.translation_window.lift()  # Ensure window stays on top
+                self.translation_window.focus_force()  # Force focus to keep window visible
+        except Exception as e:
+            logging.error(f"Error updating translation window: {e}")
+            self.stop_translation()
         
     def cleanup(self):
         """Clean up resources before exit"""

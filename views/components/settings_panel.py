@@ -6,7 +6,6 @@ class SettingsPanel(ctk.CTkFrame):
     def __init__(
         self,
         master: any,
-        on_toggle_theme: Callable,
         on_toggle_topmost: Callable,
         on_toggle_game_mode: Callable,
         on_change_opacity: Callable,
@@ -18,7 +17,6 @@ class SettingsPanel(ctk.CTkFrame):
         super().__init__(master, **kwargs)
         
         # Store callbacks
-        self.on_toggle_theme = on_toggle_theme
         self.on_toggle_topmost = on_toggle_topmost
         self.on_toggle_game_mode = on_toggle_game_mode
         self.on_change_opacity = on_change_opacity
@@ -101,18 +99,18 @@ class SettingsPanel(ctk.CTkFrame):
             def command():
                 try:
                     # Disable all radio buttons temporarily
-                    for widget in engine_frame.winfo_children():
-                        if isinstance(widget, ctk.CTkRadioButton):
-                            widget.configure(state="disabled")
+                    for btn in engine_frame.winfo_children():
+                        if isinstance(btn, ctk.CTkRadioButton):
+                            btn.configure(state="disabled")
                     
                     # Call the handler
                     self.on_change_translation_engine(engine_name)
                     
                     # Re-enable radio buttons after a delay
                     self.after(500, lambda: [
-                        widget.configure(state="normal")
-                        for widget in engine_frame.winfo_children()
-                        if isinstance(widget, ctk.CTkRadioButton)
+                        radio_btn.configure(state="normal")
+                        for radio_btn in engine_frame.winfo_children()
+                        if isinstance(radio_btn, ctk.CTkRadioButton)
                     ])
                 except Exception as e:
                     logging.error(f"Error in translation engine change: {e}")
@@ -140,18 +138,18 @@ class SettingsPanel(ctk.CTkFrame):
             def command():
                 try:
                     # Disable all radio buttons temporarily
-                    for widget in ocr_frame.winfo_children():
-                        if isinstance(widget, ctk.CTkRadioButton):
-                            widget.configure(state="disabled")
+                    for btn in ocr_frame.winfo_children():
+                        if isinstance(btn, ctk.CTkRadioButton):
+                            btn.configure(state="disabled")
                     
                     # Call the handler
                     self.on_change_ocr_engine(engine_name)
                     
                     # Re-enable radio buttons after a delay
                     self.after(500, lambda: [
-                        widget.configure(state="normal")
-                        for widget in ocr_frame.winfo_children()
-                        if isinstance(widget, ctk.CTkRadioButton)
+                        radio_btn.configure(state="normal")
+                        for radio_btn in ocr_frame.winfo_children()
+                        if isinstance(radio_btn, ctk.CTkRadioButton)
                     ])
                 except Exception as e:
                     logging.error(f"Error in OCR engine change: {e}")
@@ -194,10 +192,6 @@ class SettingsPanel(ctk.CTkFrame):
         percentage = int(value)
         self.opacity_label.configure(text=f"{percentage}%")
         self.on_change_opacity(percentage / 100)
-        
-    def get_theme_button(self) -> ctk.CTkButton:
-        """Get the theme toggle button"""
-        return self.theme_btn
         
     def cleanup(self):
         """Clean up resources"""

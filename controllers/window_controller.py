@@ -4,7 +4,6 @@ from typing import Optional, Tuple
 from models.config_model import ConfigModel
 import win32gui
 import win32con
-import win32api
 import ctypes
 
 class WindowController:
@@ -26,7 +25,7 @@ class WindowController:
         """Get a registered window"""
         return self._windows.get(window_id)
         
-    def set_window_opacity(self, window: ctk.CTk | str, opacity: float):
+    def set_window_opacity(self, window: ctk.CTk | ctk.CTkToplevel | str, opacity: float):
         """Set window opacity (0.0 to 1.0)"""
         try:
             # If window_id is provided, get the window
@@ -40,10 +39,10 @@ class WindowController:
             hwnd = ctypes.windll.user32.GetParent(window.winfo_id())
             
             # Convert opacity to byte value (0-255)
-            alpha = int(opacity * 255)
+            alpha = int(round(opacity * 255))
             
             # Set window to layered for opacity support
-            style = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
+            style = int(win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE))
             win32gui.SetWindowLong(hwnd, win32con.GWL_EXSTYLE, style | win32con.WS_EX_LAYERED)
             
             # Set opacity
@@ -51,7 +50,7 @@ class WindowController:
             
             # Update config if window_id was provided
             if isinstance(window, str):
-                self.config_model.update_config('window', 'opacity', int(opacity * 100))
+                self.config_model.update_config('window', 'opacity', int(round(opacity * 100)))
         except Exception as e:
             logging.error(f"Error setting window opacity: {e}")
             
@@ -68,7 +67,7 @@ class WindowController:
     def get_window_position(self, window_id: str) -> Optional[Tuple[int, int]]:
         """Get window position"""
         if window := self._windows.get(window_id):
-            return (window.winfo_x(), window.winfo_y())
+            return window.winfo_x(), window.winfo_y()
         return None
         
     def set_window_size(self, window_id: str, width: int, height: int):
@@ -79,7 +78,7 @@ class WindowController:
     def get_window_size(self, window_id: str) -> Optional[Tuple[int, int]]:
         """Get window size"""
         if window := self._windows.get(window_id):
-            return (window.winfo_width(), window.winfo_height())
+            return window.winfo_width(), window.winfo_height()
         return None
         
     def center_window(self, window_id: str):
@@ -107,7 +106,8 @@ class WindowController:
         """Clean up resources"""
         self.close_all_windows()
         
-    def set_click_through(self, window: ctk.CTk, enable: bool):
+    @staticmethod
+    def set_click_through(window: ctk.CTk | ctk.CTkToplevel, enable: bool):
         """Set window click-through state"""
         try:
             # Get window handle
@@ -123,7 +123,7 @@ class WindowController:
                 # Get current window style
                 style = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
                 # Remove WS_EX_TRANSPARENT style but keep WS_EX_LAYERED for opacity
-                new_style = (style & ~win32con.WS_EX_TRANSPARENT) | win32con.WS_EX_LAYERED
+                new_style = style & ~win32con.WS_EX_TRANSPARENT | win32con.WS_EX_LAYERED
                 win32gui.SetWindowLong(hwnd, win32con.GWL_EXSTYLE, new_style)
         except Exception as e:
             logging.error(f"Error setting click-through state: {e}")

@@ -1,14 +1,46 @@
-from typing import Any, Dict, List, Optional
 import json
 import logging
-from pathlib import Path
+import os
+from typing import Any, Dict, TypeVar
+from typing_extensions import Protocol
+
+T = TypeVar('T')
+
+class SupportsWrite(Protocol):
+    def write(self, __s: str) -> int: ...
 
 class ConfigModel:
-    def __init__(self, config_file: str = 'config.json'):
-        self._config_file = config_file
-        self._config: Dict = {}
-        self._observers: List[callable] = []
+    def __init__(self):
+        self._config: Dict[str, Dict[str, Any]] = {}
+        self._config_file = "config.json"
+        self._observers = []
+        
+        # Load config from file
         self._load_config()
+        
+    def _load_config(self):
+        """Load configuration from file"""
+        try:
+            if os.path.exists(self._config_file):
+                with open(self._config_file, 'r', encoding='utf-8') as f:
+                    self._config = json.load(f)
+        except OSError as e:
+            logging.error(f"Error loading config: {e}")
+            self._config = {}
+            
+    def _save_config(self):
+        """Save configuration to file"""
+        try:
+            with open(self._config_file, 'w', encoding='utf-8') as f:
+                json.dump(self._config, f, indent=4)
+            self.notify_observers()
+        except OSError as e:
+            logging.error(f"Error saving config: {e}")
+            
+    def _ensure_section(self, section: str) -> None:
+        """Ensure a section exists in the config"""
+        if section not in self._config:
+            self._config[section] = {}
         
     def add_observer(self, observer: callable):
         """Observer pattern: Add an observer to be notified of changes"""
@@ -19,29 +51,8 @@ class ConfigModel:
         for observer in self._observers:
             observer()
             
-    def _load_config(self):
-        """Load configuration from file"""
-        try:
-            if Path(self._config_file).exists():
-                with open(self._config_file, 'r', encoding='utf-8') as f:
-                    self._config = json.load(f)
-            else:
-                self._config = self._get_default_config()
-                self._save_config()
-        except Exception as e:
-            logging.error(f"Error loading config: {e}")
-            self._config = self._get_default_config()
-            
-    def _save_config(self):
-        """Save configuration to file"""
-        try:
-            with open(self._config_file, 'w', encoding='utf-8') as f:
-                json.dump(self._config, f, indent=4)
-            self.notify_observers()
-        except Exception as e:
-            logging.error(f"Error saving config: {e}")
-            
-    def _get_default_config(self) -> Dict:
+    @staticmethod
+    def _get_default_config() -> Dict:
         """Get default configuration"""
         return {
             'theme': {
@@ -61,7 +72,7 @@ class ConfigModel:
                 'engine': 'Tesseract'
             },
             'shortcuts': {
-                'enabled': True
+                'enabled': False
             }
         }
         
@@ -69,7 +80,8 @@ class ConfigModel:
         """Get configuration value"""
         try:
             return self._config.get(section, {}).get(key, default)
-        except Exception:
+        except (KeyError, TypeError) as e:
+            logging.error(f"Error getting config value: {e}")
             return default
             
     def update_config(self, section: str, key: str, value: Any):

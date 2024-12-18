@@ -1,40 +1,51 @@
 import logging
 import keyboard
 import customtkinter as ctk
-from typing import Dict, Callable, Tuple
+from typing import Dict, Callable, Tuple, Optional
 from models.config_model import ConfigModel
 
+class ShortcutError(Exception):
+    """Custom exception for keyboard shortcut operations"""
+    pass
+
 class ShortcutController:
+    # Modifier key mappings
+    MODIFIER_MAP = {
+        'control': 'ctrl'
+    }
+    
+    # Special key mappings
+    SPECIAL_KEYS = {
+        'space': 'space',
+        'r': 'r',
+        't': 't',
+        'o': 'o',
+        'h': 'h'
+    }
+    
     def __init__(self, root: ctk.CTk, config_model: ConfigModel):
         self.root = root
         self.config_model = config_model
         # Store both formats for each shortcut
         self._shortcuts: Dict[str, Tuple[Callable, str]] = {}  # keyboard_format -> (handler, tkinter_format)
-        self._global_shortcuts_enabled = self.config_model.get_config('shortcuts', 'enabled', True)
+        self._global_shortcuts_enabled = False  # Start with global shortcuts disabled
         
-    def _parse_tkinter_format(self, tkinter_format: str) -> str:
+    @staticmethod
+    def _parse_tkinter_format(tkinter_format: str) -> str:
         """Extract key combination from Tkinter format"""
         if not (tkinter_format.startswith('<') and tkinter_format.endswith('>')):
             return tkinter_format
         return tkinter_format[1:-1]  # Remove < and > brackets
 
-    def _convert_modifier_keys(self, key_parts: list) -> list:
+    @staticmethod
+    def _convert_modifier_keys(key_parts: list) -> list:
         """Convert modifier keys to keyboard library format"""
-        modifier_map = {
-            'control': 'ctrl'
-        }
-        return [modifier_map.get(part.lower(), part.lower()) for part in key_parts]
+        return [ShortcutController.MODIFIER_MAP.get(part.lower(), part.lower()) for part in key_parts]
 
-    def _convert_special_keys(self, key_parts: list) -> list:
+    @staticmethod
+    def _convert_special_keys(key_parts: list) -> list:
         """Convert special keys to keyboard library format"""
-        special_keys = {
-            'space': 'space',
-            'r': 'r',
-            't': 't',
-            'o': 'o',
-            'h': 'h'
-        }
-        return [special_keys.get(part.lower(), part) for part in key_parts]
+        return [ShortcutController.SPECIAL_KEYS.get(part.lower(), part) for part in key_parts]
 
     def _convert_shortcut_format(self, tkinter_format: str) -> str:
         """Convert Tkinter shortcut format to keyboard library format"""
@@ -51,8 +62,19 @@ class ShortcutController:
         # Join with + for keyboard library format
         return '+'.join(parts)
         
+    @staticmethod
+    def _handle_keyboard_error(operation: str, keyboard_format: str, error: Exception) -> None:
+        """Handle keyboard library errors"""
+        error_msg = str(error)
+        if "not found" in error_msg:
+            logging.warning(f"Hotkey {keyboard_format} not found during {operation}")
+        else:
+            logging.error(f"Keyboard error during {operation} for {keyboard_format}: {error}")
+            
     def set_shortcut_handler(self, tkinter_format: str, handler: Callable):
         """Register a shortcut handler"""
+        keyboard_format: Optional[str] = None
+        
         try:
             # Convert shortcut format for keyboard library
             keyboard_format = self._convert_shortcut_format(tkinter_format)
@@ -62,8 +84,8 @@ class ShortcutController:
             def safe_handler():
                 try:
                     handler()
-                except Exception as e:
-                    logging.error(f"Error in shortcut handler: {e}")
+                except Exception as handler_err:
+                    logging.error(f"Error in shortcut handler: {handler_err}")
             
             # Store both formats
             if keyboard_format in self._shortcuts:
@@ -71,8 +93,8 @@ class ShortcutController:
                 if self._global_shortcuts_enabled:
                     try:
                         keyboard.remove_hotkey(keyboard_format)
-                    except:
-                        pass
+                    except Exception as remove_err:
+                        ShortcutController._handle_keyboard_error("remove_hotkey", keyboard_format, remove_err)
                 
             self._shortcuts[keyboard_format] = (safe_handler, tkinter_format)
             
@@ -80,24 +102,25 @@ class ShortcutController:
                 keyboard.add_hotkey(keyboard_format, safe_handler, suppress=True, trigger_on_release=True)
                 logging.info(f"Registered global shortcut: {keyboard_format}")
             else:
-                self.root.bind(tkinter_format, lambda e: safe_handler())
+                self.root.bind(tkinter_format, lambda event: safe_handler())
                 logging.info(f"Registered local shortcut: {tkinter_format}")
                 
-        except Exception as e:
-            logging.error(f"Error setting shortcut {tkinter_format} ({keyboard_format}): {e}, {type(e)}")
+        except ValueError as val_err:
+            logging.error(f"Invalid shortcut format {tkinter_format}: {val_err}")
+        except Exception as setup_err:
+            logging.error(f"Unexpected error setting shortcut {tkinter_format} ({keyboard_format}): {setup_err}")
             
     def toggle_global_shortcuts(self, enabled: bool):
         """Toggle between global and local shortcuts"""
         try:
             self._global_shortcuts_enabled = enabled
-            self.config_model.update_config('shortcuts', 'enabled', enabled)
             
             # Re-register all shortcuts
             for keyboard_format, (handler, tkinter_format) in self._shortcuts.items():
                 try:
                     keyboard.remove_hotkey(keyboard_format)
-                except:
-                    pass
+                except Exception as remove_err:
+                    ShortcutController._handle_keyboard_error("remove_hotkey", keyboard_format, remove_err)
                     
                 self.root.unbind(tkinter_format)
                 
@@ -105,29 +128,21 @@ class ShortcutController:
                     keyboard.add_hotkey(keyboard_format, handler, suppress=True, trigger_on_release=True)
                     logging.info(f"Re-registered global shortcut: {keyboard_format}")
                 else:
-                    self.root.bind(tkinter_format, lambda e: handler())
+                    self.root.bind(tkinter_format, lambda event: handler())
                     logging.info(f"Re-registered local shortcut: {tkinter_format}")
                     
         except Exception as e:
             logging.error(f"Error toggling shortcuts: {e}")
+            raise ShortcutError(f"Failed to toggle shortcuts: {e}")
             
     def cleanup(self):
-        """Clean up all registered shortcuts"""
+        """Clean up resources before exit"""
         try:
-            for keyboard_format, (_, tkinter_format) in self._shortcuts.items():
-                if self._global_shortcuts_enabled:
-                    try:
-                        keyboard.remove_hotkey(keyboard_format)
-                    except:
-                        pass
-                else:
-                    try:
-                        self.root.unbind(tkinter_format)
-                    except:
-                        pass
-            self._shortcuts.clear()
+            # Disable global shortcuts
+            if self._global_shortcuts_enabled:
+                self.toggle_global_shortcuts(False)
         except Exception as e:
-            logging.error(f"Error cleaning up shortcuts: {e}")
+            logging.error(f"Error during shortcut cleanup: {e}")
             
     def is_global_shortcuts_enabled(self) -> bool:
         """Check if global shortcuts are enabled"""

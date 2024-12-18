@@ -5,7 +5,7 @@ import pytesseract
 import easyocr
 import torch
 import winocr
-from PIL import Image, ImageEnhance
+from PIL import Image
 import time
 from typing import List, Optional
 from dotenv import load_dotenv
@@ -148,50 +148,57 @@ class OCRManager:
         
         image_np = np.array(image)
         results = self._reader.readtext(image_np)
-        return self._process_easyocr_results(results)
+        return OCRManager._process_easyocr_results(results)
 
-    def _process_easyocr_results(self, results: List) -> str:
+    @staticmethod
+    def _process_easyocr_results(results: List) -> str:
         """Process EasyOCR results into text"""
         if not results:
             return ""
             
-        lines = self._group_text_blocks(results)
+        lines = OCRManager._group_text_blocks(results)
         text_lines = [' '.join(block[1] for block in line) for line in lines]
         text = ' '.join(text_lines)
-        return self._fix_ocr_errors(text)
+        return OCRManager._fix_ocr_errors(text)
 
-    def _calculate_line_threshold(self, results: List) -> float:
+    @staticmethod
+    def _calculate_line_threshold(results: List) -> float:
         """Calculate threshold for considering text blocks on the same line"""
         heights = [abs(box[0][3][1] - box[0][0][1]) for box in results]
         avg_height = sum(heights) / len(heights) if heights else 0
         return avg_height * 0.5
 
-    def _get_block_y_position(self, block) -> float:
+    @staticmethod
+    def _get_block_y_position(block) -> float:
         """Get the top Y position of a text block"""
         return min(p[1] for p in block[0])
 
-    def _get_block_x_position(self, block) -> float:
+    @staticmethod
+    def _get_block_x_position(block) -> float:
         """Get the left X position of a text block"""
         return min(p[0] for p in block[0])
 
-    def _sort_line_by_x_position(self, line: List) -> List:
-        """Sort text blocks in a line by X position"""
-        return sorted(line, key=self._get_block_x_position)
-
-    def _should_add_to_current_line(self, top_y: float, last_y: float, threshold: float) -> bool:
+    @staticmethod
+    def _should_add_to_current_line(top_y: float, last_y: float, threshold: float) -> bool:
         """Determine if a block should be added to the current line"""
         return last_y is None or abs(top_y - last_y) <= threshold
 
-    def _group_text_blocks(self, results: List) -> List[List]:
+    @staticmethod
+    def _sort_line_by_x_position(line: List) -> List:
+        """Sort text blocks in a line by X position"""
+        return sorted(line, key=OCRManager._get_block_x_position)
+
+    @staticmethod
+    def _group_text_blocks(results: List) -> List[List]:
         """Group text blocks into lines based on vertical position"""
         if not results:
             return []
 
         # Calculate line height threshold
-        line_threshold = self._calculate_line_threshold(results)
+        line_threshold = OCRManager._calculate_line_threshold(results)
         
         # Sort blocks by vertical position
-        sorted_by_y = sorted(results, key=self._get_block_y_position)
+        sorted_by_y = sorted(results, key=OCRManager._get_block_y_position)
         
         lines = []
         current_line = []
@@ -199,19 +206,19 @@ class OCRManager:
         
         # Group blocks into lines
         for block in sorted_by_y:
-            top_y = self._get_block_y_position(block)
+            top_y = OCRManager._get_block_y_position(block)
             
-            if self._should_add_to_current_line(top_y, last_y, line_threshold):
+            if OCRManager._should_add_to_current_line(top_y, last_y, line_threshold):
                 current_line.append(block)
             else:
                 if current_line:
-                    lines.append(self._sort_line_by_x_position(current_line))
+                    lines.append(OCRManager._sort_line_by_x_position(current_line))
                 current_line = [block]
             last_y = top_y
         
         # Add the last line if it exists
         if current_line:
-            lines.append(self._sort_line_by_x_position(current_line))
+            lines.append(OCRManager._sort_line_by_x_position(current_line))
             
         return lines
 
@@ -228,7 +235,8 @@ class OCRManager:
         text = pytesseract.image_to_string(image).strip()
         return self._fix_ocr_errors(text)
 
-    def _fix_ocr_errors(self, text: str) -> str:
+    @staticmethod
+    def _fix_ocr_errors(text: str) -> str:
         """Fix common OCR errors in the text."""
         # Common replacements
         replacements = {

@@ -1,18 +1,10 @@
 import logging
 import customtkinter as ctk
-from typing import List, Optional, Protocol
-from datetime import datetime
+from typing import List, Optional
 from models.translation_model import TranslationModel, TranslationEntry
 from views.windows.history_window import HistoryWindow
 
-class HistoryWindowProtocol(Protocol):
-    def show_history_window(self): ...
-    def get_history_by_languages(self, source_lang: str, target_lang: str) -> List[TranslationEntry]: ...
-    def search_history(self, query: str) -> List[TranslationEntry]: ...
-    def get_history_stats(self) -> dict: ...
-    def clear_history(self): ...
-
-class HistoryController(HistoryWindowProtocol):
+class HistoryController:
     def __init__(self, root: ctk.CTk, translation_model: TranslationModel):
         self.root = root
         self.translation_model = translation_model
@@ -30,15 +22,11 @@ class HistoryController(HistoryWindowProtocol):
                 # Load history entries
                 entries = self.translation_model.get_history()
                 self.history_window.load_entries(entries)
-                
-                # Update statistics
-                stats = self.get_history_stats()
-                self.history_window.update_stats(stats)
             else:
                 self.history_window.focus()
                 
-        except Exception as e:
-            logging.error(f"Error showing history window: {e}")
+        except Exception as exc:
+            logging.error(f"Error showing history window: {exc}")
             raise
             
     def get_history_by_languages(self, source_lang: str, target_lang: str) -> List[TranslationEntry]:
@@ -53,13 +41,13 @@ class HistoryController(HistoryWindowProtocol):
         query = query.lower()
         return [
             entry for entry in self.translation_model.get_history()
-            if query in entry.source_text.lower() or query in entry.translated_text.lower()
+            if query in entry.source_text.lower() or 
+               query in entry.translated_text.lower()
         ]
         
     def get_history_stats(self) -> dict:
         """Get history statistics"""
         history = self.translation_model.get_history()
-        
         if not history:
             return {
                 'total_entries': 0,
@@ -79,7 +67,7 @@ class HistoryController(HistoryWindowProtocol):
             sources.add(entry.source_lang)
             targets.add(entry.target_lang)
             
-        most_used_engine = max(engines_count.items(), key=lambda x: x[1])[0]
+        most_used_engine = max(engines_count.items(), key=lambda x: x[1])[0] if engines_count else None
         
         return {
             'total_entries': len(history),
@@ -90,17 +78,26 @@ class HistoryController(HistoryWindowProtocol):
             'engine_usage': engines_count
         }
         
-    def clear_history(self):
+    def clear_history(self) -> None:
         """Clear translation history"""
         try:
             self.translation_model.clear_history()
-            if self.history_window and self.history_window.winfo_exists():
-                self.history_window.load_entries([])
-                self.history_window.update_stats(self.get_history_stats())
-        except Exception as e:
-            logging.error(f"Error clearing history: {e}")
+        except Exception as err:
+            logging.error(f"Error clearing history: {err}")
             raise
             
+    def on_close(self) -> None:
+        """Handle window close"""
+        self.history_window = None
+        
+    def on_copy_text(self, text: str) -> None:
+        """Handle text copy"""
+        pass  # No specific action needed
+        
+    def on_filter_change(self, filter_type: str, value: str) -> None:
+        """Handle filter change"""
+        pass  # No specific action needed
+        
     def cleanup(self):
         """Clean up resources"""
         if self.history_window:

@@ -1,8 +1,10 @@
-import sys
 import logging
-import traceback
+import sys
+
 import customtkinter as ctk
+
 from controllers.main_controller import MainController
+
 
 def main():
     # Configure logging

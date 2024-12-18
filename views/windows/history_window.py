@@ -1,10 +1,12 @@
-import customtkinter as ctk
-from typing import Protocol, List, Optional, Dict, Set, Callable
 import logging
 from datetime import datetime
+from typing import Protocol, List, Optional, Dict, Callable
+
+import customtkinter as ctk
 import pyperclip
-from models.translation_model import TranslationEntry
 from CTkMessagebox import CTkMessagebox
+
+from models.translation_model import TranslationEntry
 
 # Constants
 CHUNK_SIZE = 20
@@ -345,7 +347,8 @@ class HistoryWindow(ctk.CTkToplevel):
         # Convert to list for UI update
         self._update_filtered_entries(list(filtered))
 
-    def _get_date_filter_function(self, filter_type: str) -> Callable[[TranslationEntry], bool]:
+    @staticmethod
+    def _get_date_filter_function(filter_type: str) -> Callable[[TranslationEntry], bool]:
         """Get the appropriate date filter function based on filter type"""
         now = datetime.now()
         
@@ -366,17 +369,17 @@ class HistoryWindow(ctk.CTkToplevel):
         self._load_entries_chunk(0, CHUNK_SIZE)
         self._calculate_stats()
         
-    def _on_search_change(self, *args):
+    def _on_search_change(self, *_):
         """Handle search text change with debouncing"""
         if self._search_after_id:
             self.after_cancel(self._search_after_id)
         self._search_after_id = self.after(DEBOUNCE_DELAY, self._apply_filters)
         
-    def _on_engine_filter_change(self, value: str):
+    def _on_engine_filter_change(self, _: str):
         """Handle engine filter change"""
         self._apply_filters()
         
-    def _on_date_filter_change(self, value: str):
+    def _on_date_filter_change(self, _: str):
         """Handle date filter change"""
         self._apply_filters()
         
@@ -388,24 +391,8 @@ class HistoryWindow(ctk.CTkToplevel):
         self._load_entries_chunk(0, CHUNK_SIZE)
         self._update_engine_options()
         
-    def _create_entry_widget(self, entry: TranslationEntry) -> None:
-        """Create optimized entry widget with error handling"""
-        try:
-            frame = ctk.CTkFrame(self.history_frame)
-            frame.pack(fill="x", padx=5, pady=2)
-            
-            # Use grid layout for better performance
-            frame.grid_columnconfigure(1, weight=1)
-            
-            # Create widgets with error handling
-            widgets = self._create_entry_widgets(frame, entry)
-            self._setup_entry_bindings(frame, widgets, entry)
-            
-        except Exception as e:
-            logging.error(f"Error creating entry widget: {e}")
-            self.show_error("Error", "Failed to create history entry")
-            
-    def _create_entry_widgets(self, frame: ctk.CTkFrame, entry: TranslationEntry) -> dict:
+    @staticmethod
+    def _create_entry_widgets(frame: ctk.CTkFrame, entry: TranslationEntry) -> dict:
         """Create and layout widgets for an entry"""
         try:
             # Timestamp
@@ -444,17 +431,34 @@ class HistoryWindow(ctk.CTkToplevel):
         except Exception as e:
             logging.error(f"Error creating entry widgets: {e}")
             raise
+
+    def _create_entry_widget(self, entry: TranslationEntry) -> None:
+        """Create optimized entry widget with error handling"""
+        try:
+            frame = ctk.CTkFrame(self.history_frame)
+            frame.pack(fill="x", padx=5, pady=2)
             
-    def _setup_entry_bindings(self, frame: ctk.CTkFrame, widgets: dict, entry: TranslationEntry) -> None:
+            # Use grid layout for better performance
+            frame.grid_columnconfigure(1, weight=1)
+            
+            # Create widgets with error handling
+            widgets = self._create_entry_widgets(frame, entry)
+            self._setup_entry_bindings(frame, widgets, entry)
+            
+        except Exception as e:
+            logging.error(f"Error creating entry widget: {e}")
+            self.show_error("Error", "Failed to create history entry")
+            
+    def _setup_entry_bindings(self, frame: ctk.CTkFrame, widgets: dict, current_entry: TranslationEntry) -> None:
         """Setup event bindings for entry widgets"""
         try:
-            def on_click(e, entry=entry):
+            def on_click(_event, entry=current_entry):
                 self._show_entry_details(entry)
                 
-            def on_enter(e):
+            def on_enter(_event):
                 frame.configure(fg_color=("gray75", "gray30"))
                 
-            def on_leave(e):
+            def on_leave(_event):
                 frame.configure(fg_color=("gray85", "gray25"))
                 
             # Configure frame

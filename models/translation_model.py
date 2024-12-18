@@ -1,16 +1,19 @@
-from typing import Dict, List, Optional
-import logging
-from dataclasses import dataclass, asdict
-from datetime import datetime
-import google.generativeai as genai
-import os
-from dotenv import load_dotenv
-import json
-import aiohttp
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
+import json
+import logging
+import os
 import time
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from datetime import datetime
+from typing import List, Optional, TYPE_CHECKING
+
+import aiohttp
+import google.generativeai as genai
+from dotenv import load_dotenv
+
+if TYPE_CHECKING:
+    from models.config_model import ConfigModel
 
 # Load environment variables
 load_dotenv()
@@ -58,17 +61,29 @@ class GoogleTranslator(TranslationEngine):
     BASE_URL = "https://translate.googleapis.com/translate_a/single"
     DEFAULT_TIMEOUT = 10
     USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+    MAX_RETRIES = 3
+    RETRY_DELAY = 1  # seconds
     
     def __init__(self):
         self._session: Optional[aiohttp.ClientSession] = None
         
     async def _ensure_session(self) -> aiohttp.ClientSession:
         """Ensure an aiohttp session exists and return it"""
-        if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession()
-        return self._session
+        try:
+            if self._session is None or self._session.closed:
+                timeout = aiohttp.ClientTimeout(total=self.DEFAULT_TIMEOUT)
+                self._session = aiohttp.ClientSession(timeout=timeout)
+            return self._session
+        except RuntimeError as e:
+            if "Event loop is closed" in str(e):
+                # Create a new session if the event loop was closed
+                timeout = aiohttp.ClientTimeout(total=self.DEFAULT_TIMEOUT)
+                self._session = aiohttp.ClientSession(timeout=timeout)
+                return self._session
+            raise
         
-    def _prepare_params(self, text: str, source_lang: str, target_lang: str) -> dict:
+    @staticmethod
+    def _prepare_params(text: str, source_lang: str, target_lang: str) -> dict:
         """Prepare request parameters"""
         return {
             "client": "gtx",
@@ -79,17 +94,20 @@ class GoogleTranslator(TranslationEngine):
             "_": str(int(time.time() * 1000))
         }
         
-    def _prepare_headers(self) -> dict:
+    @staticmethod
+    def _prepare_headers() -> dict:
         """Prepare request headers"""
         return {
-            'User-Agent': self.USER_AGENT
+            'User-Agent': GoogleTranslator.USER_AGENT
         }
         
-    def _is_valid_result(self, result: list) -> bool:
+    @staticmethod
+    def _is_valid_result(result: list) -> bool:
         """Check if the translation result is valid"""
         return bool(result and result[0])
         
-    def _is_valid_part(self, part: list) -> bool:
+    @staticmethod
+    def _is_valid_part(part: list) -> bool:
         """Check if a translation part is valid"""
         return bool(part and len(part) > 0)
         
@@ -119,37 +137,83 @@ class GoogleTranslator(TranslationEngine):
             logging.error(f"Error extracting translation: {str(e)}")
             return None
             
+    async def _make_request(self, session: aiohttp.ClientSession, params: dict, headers: dict) -> Optional[list]:
+        """Make HTTP request with retry mechanism"""
+        for attempt in range(self.MAX_RETRIES):
+            try:
+                async with session.get(
+                    self.BASE_URL,
+                    params=params,
+                    headers=headers
+                ) as response:
+                    response.raise_for_status()
+                    text = await response.text()
+                    # Google Translate API returns a weird JSON format that needs to be cleaned
+                    text = text.replace(',,', ',null,').replace('[,', '[null,')
+                    try:
+                        return json.loads(text)
+                    except json.JSONDecodeError:
+                        logging.error(f"Failed to parse response: {text}")
+                        return None
+            except aiohttp.ClientConnectorError as e:
+                if attempt == self.MAX_RETRIES - 1:
+                    logging.error(f"Connection error after {self.MAX_RETRIES} attempts: {str(e)}")
+                    raise
+                logging.warning(f"Connection attempt {attempt + 1} failed, retrying...")
+                await asyncio.sleep(self.RETRY_DELAY * (attempt + 1))
+            except aiohttp.ClientError as e:
+                logging.error(f"HTTP error: {str(e)}")
+                raise
+            except Exception as e:
+                logging.error(f"Unexpected error: {str(e)}")
+                raise
+        return None
+        
     async def translate(self, text: str, source_lang: str, target_lang: str) -> Optional[str]:
         """Translate text using Google Translate API"""
         if not text:
             return None
             
         try:
-            session = await self._ensure_session()
-            params = self._prepare_params(text, source_lang, target_lang)
-            headers = self._prepare_headers()
-            
-            async with session.get(
-                self.BASE_URL,
-                params=params,
-                headers=headers,
-                timeout=self.DEFAULT_TIMEOUT
-            ) as response:
-                response.raise_for_status()
-                result = await response.json()
-                return self._extract_translation(result)
+            # Create a new session for each translation to avoid event loop issues
+            timeout = aiohttp.ClientTimeout(total=self.DEFAULT_TIMEOUT)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                params = self._prepare_params(text, source_lang, target_lang)
+                headers = self._prepare_headers()
                 
+                result = await self._make_request(session, params, headers)
+                if result:
+                    return self._extract_translation(result)
+                    
+        except aiohttp.ClientConnectorError:
+            logging.error("Cannot connect to Google Translate API. Please check your internet connection.")
+            return None
+        except aiohttp.ClientResponseError as e:
+            logging.error(f"Google Translate API response error: {e.status} - {e.message}")
+            return None
         except aiohttp.ClientError as e:
-            logging.error(f"Google Translate API error: {str(e)}")
+            logging.error(f"Google Translate API client error: {str(e)}")
+            return None
+        except RuntimeError as e:
+            if "Event loop is closed" in str(e):
+                logging.error("Translation failed: Event loop was closed")
+            else:
+                logging.error(f"Runtime error in Google Translate: {str(e)}")
             return None
         except Exception as e:
             logging.error(f"Unexpected error in Google Translate: {str(e)}")
             return None
             
+        return None
+            
     async def cleanup(self):
         """Cleanup resources"""
-        if self._session and not self._session.closed:
-            await self._session.close()
+        try:
+            if self._session and not self._session.closed:
+                await self._session.close()
+        except Exception as e:
+            logging.error(f"Error during cleanup: {str(e)}")
+            # Don't raise the exception as we're cleaning up
 
 class GeminiTranslator(TranslationEngine):
     def __init__(self, api_key: Optional[str] = None):
@@ -181,8 +245,14 @@ class LocalAPITranslator(TranslationEngine):
     DEFAULT_TIMEOUT = 10
     
     async def translate(self, text: str, source_lang: str, target_lang: str) -> Optional[str]:
+        if not text:
+            return None
+            
         try:
-            async with aiohttp.ClientSession() as session:
+            logging.info(f"Attempting Local API translation: {source_lang} -> {target_lang}")
+            timeout = aiohttp.ClientTimeout(total=self.DEFAULT_TIMEOUT)
+            
+            async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.post(
                     self.API_URL,
                     json={
@@ -190,23 +260,43 @@ class LocalAPITranslator(TranslationEngine):
                         'source_lang': source_lang,
                         'target_lang': target_lang
                     },
-                    headers={'Content-Type': 'application/json'},
-                    timeout=self.DEFAULT_TIMEOUT
+                    headers={'Content-Type': 'application/json'}
                 ) as response:
                     response.raise_for_status()
                     result = await response.json()
-                    return result.get('data', '')
+                    
+                    if 'data' not in result:
+                        logging.error(f"Local API response missing 'data' field: {result}")
+                        return None
+                        
+                    translated_text = result.get('data', '')
+                    if translated_text:
+                        logging.info("Local API translation successful")
+                        return translated_text
+                    else:
+                        logging.warning("Local API returned empty translation")
+                        return None
+                        
+        except aiohttp.ClientConnectorError:
+            logging.error(f"Cannot connect to Local API at {self.API_URL}")
+            return None
+        except aiohttp.ClientResponseError as e:
+            logging.error(f"Local API response error: {e.status} - {e.message}")
+            return None
+        except aiohttp.ClientError as e:
+            logging.error(f"Local API client error: {str(e)}")
+            return None
         except Exception as e:
-            logging.error(f"Local API translation error: {str(e)}")
+            logging.error(f"Unexpected error in Local API translation: {str(e)}")
             return None
 
 class TranslationModel:
-    def __init__(self):
+    def __init__(self, config_model: Optional['ConfigModel'] = None):
         self._history: List[TranslationEntry] = []
-        self._current_engine: str = 'Google Translate'
         self._observers: List[callable] = []
         self._available_engines = ["Google Translate", "Gemini", "Local API"]
         self._history_file = "translation_history.json"
+        self.config_model = config_model
         
         # Initialize translation engines
         self._engines = {
@@ -221,7 +311,18 @@ class TranslationModel:
         # Remove unavailable engines
         self._check_available_engines()
         
-    def _is_engine_available(self, engine_name: str, engine: TranslationEngine) -> bool:
+        # Set default engine after checking availability
+        self._current_engine = (
+            self.config_model.get_config('translation', 'engine', 'Google Translate')
+            if self.config_model else 'Google Translate'
+        )
+        
+        if self._current_engine not in self._available_engines:
+            self._current_engine = self._available_engines[0]
+            logging.warning(f"Default engine not available, using {self._current_engine} instead")
+        
+    @staticmethod
+    def _is_engine_available(engine_name: str, engine: TranslationEngine) -> bool:
         """Check if a translation engine is available"""
         try:
             if isinstance(engine, GeminiTranslator):
@@ -268,7 +369,9 @@ class TranslationModel:
         """Save translation history to JSON file"""
         try:
             with open(self._history_file, 'w', encoding='utf-8') as f:
-                json.dump([entry.to_dict() for entry in self._history], f, ensure_ascii=False, indent=2)
+                history_data = [entry.to_dict() for entry in self._history]
+                json_str = json.dumps(history_data, ensure_ascii=False, indent=2)
+                f.write(json_str)
             logging.info(f"Saved {len(self._history)} entries to history file")
         except Exception as e:
             logging.error(f"Error saving history file: {e}")
@@ -282,6 +385,18 @@ class TranslationModel:
         for observer in self._observers:
             observer()
             
+    def set_translation_engine(self, engine_name: str):
+        """Change the translation engine"""
+        if engine_name not in self._available_engines:
+            logging.error(f"Attempted to set unknown engine: {engine_name}")
+            logging.info(f"Available engines: {self._available_engines}")
+            raise ValueError(f"Unknown translation engine: {engine_name}")
+            
+        if engine_name != self._current_engine:
+            logging.info(f"Switching translation engine from {self._current_engine} to {engine_name}")
+            self._current_engine = engine_name
+            self.notify_observers()
+            
     async def translate(self, text: str, source_lang: str = 'auto', target_lang: str = 'en') -> str:
         """Translate text using current engine"""
         if not text.strip():
@@ -290,13 +405,21 @@ class TranslationModel:
         try:
             engine = self._engines.get(self._current_engine)
             if not engine:
+                logging.error(f"Translation engine not found: {self._current_engine}")
+                logging.info(f"Available engines: {self._available_engines}")
                 raise ValueError(f"Unknown translation engine: {self._current_engine}")
                 
+            logging.info(f"Using translation engine: {self._current_engine}")
             result = await engine.translate(text, source_lang, target_lang)
-            return result if result else ""
+            
+            if result is None:
+                logging.warning(f"Translation failed with {self._current_engine}, result is None")
+                return ""
+                
+            return result
                 
         except Exception as e:
-            logging.error(f"Translation error: {e}")
+            logging.error(f"Translation error with {self._current_engine}: {e}")
             return ""
             
     def add_to_history(self, source_text: str, translated_text: str, source_lang: str, target_lang: str):
@@ -323,14 +446,6 @@ class TranslationModel:
         self._save_history()
         self.notify_observers()
         
-    def set_translation_engine(self, engine_name: str):
-        """Change the translation engine"""
-        if engine_name not in self._available_engines:
-            raise ValueError(f"Unknown translation engine: {engine_name}")
-            
-        self._current_engine = engine_name
-        self.notify_observers()
-            
     def get_current_engine(self) -> str:
         """Get current translation engine name"""
         return self._current_engine
@@ -341,4 +456,7 @@ class TranslationModel:
         
     def cleanup(self):
         """Clean up resources"""
-        self._executor.shutdown(wait=True) 
+        # Clean up translation engines
+        for engine in self._engines.values():
+            if hasattr(engine, 'cleanup') and callable(engine.cleanup):
+                asyncio.create_task(engine.cleanup()) 
