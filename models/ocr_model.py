@@ -130,84 +130,104 @@ class OCRManager:
 
     async def _perform_ocr(self, image: Image.Image, method: str, source_lang: str) -> str:
         """Perform OCR using specified method"""
-        if method == "EasyOCR":
-            try:
-                if not self._reader:
-                    self._reader = self.get_easyocr_reader()
-                    
-                # Convert PIL Image to numpy array
-                image_np = np.array(image)
-                
-                # Get OCR results
-                results = self._reader.readtext(image_np)
-                
-                # Calculate line groups based on vertical positions
-                if not results:
-                    return ""
-                    
-                # Calculate the average height of text blocks
-                heights = [abs(box[0][3][1] - box[0][0][1]) for box in results]
-                avg_height = sum(heights) / len(heights)
-                line_threshold = avg_height * 0.5  # Threshold for considering text on same line
-                
-                # Group text blocks into lines
-                lines = []
-                current_line = []
-                last_y = None
-                
-                # Sort initially by top y-coordinate
-                sorted_by_y = sorted(results, key=lambda r: min(p[1] for p in r[0]))
-                
-                for result in sorted_by_y:
-                    top_y = min(p[1] for p in result[0])
-                    
-                    if last_y is None or abs(top_y - last_y) <= line_threshold:
-                        current_line.append(result)
-                    else:
-                        if current_line:
-                            # Sort text blocks in the line by x-coordinate
-                            current_line.sort(key=lambda r: min(p[0] for p in r[0]))
-                            lines.append(current_line)
-                        current_line = [result]
-                    last_y = top_y
-                
-                # Don't forget the last line
-                if current_line:
-                    current_line.sort(key=lambda r: min(p[0] for p in r[0]))
-                    lines.append(current_line)
-                    
-                # Combine all text maintaining the order
-                text_lines = []
-                for line in lines:
-                    line_text = ' '.join(block[1] for block in line)
-                    text_lines.append(line_text)
-                
-                text = ' '.join(text_lines)
-                return self._fix_ocr_errors(text)
-                
-            except Exception as e:
-                logging.error(f"EasyOCR processing error: {e}")
-                return ""
-            
-        elif method == "Windows OCR":
-            try:
-                result = await winocr.recognize_pil(image, 'en' if source_lang == 'auto' else source_lang)
-                if result and hasattr(result, 'text'):
-                    return self._fix_ocr_errors(result.text.strip())
-                return ""
-            except Exception as e:
-                logging.error(f"Windows OCR error: {e}")
-                return ""
+        try:
+            if method == "EasyOCR":
+                return await self._perform_easyocr(image)
+            elif method == "Windows OCR":
+                return await self._perform_windows_ocr(image, source_lang)
+            else:
+                return self._perform_tesseract_ocr(image)
+        except Exception as e:
+            logging.error(f"{method} OCR error: {e}")
+            return ""
+
+    async def _perform_easyocr(self, image: Image.Image) -> str:
+        """Perform OCR using EasyOCR"""
+        if not self._reader:
+            self._reader = self.get_easyocr_reader()
         
-        else:  # Tesseract
-            try:
-                self.ensure_tesseract()
-                text = pytesseract.image_to_string(image).strip()
-                return self._fix_ocr_errors(text)
-            except Exception as e:
-                logging.error(f"Tesseract error: {e}")
-                return ""
-                
+        image_np = np.array(image)
+        results = self._reader.readtext(image_np)
+        return self._process_easyocr_results(results)
+
+    def _process_easyocr_results(self, results: List) -> str:
+        """Process EasyOCR results into text"""
+        if not results:
+            return ""
+            
+        lines = self._group_text_blocks(results)
+        text_lines = [' '.join(block[1] for block in line) for line in lines]
+        text = ' '.join(text_lines)
+        return self._fix_ocr_errors(text)
+
+    def _calculate_line_threshold(self, results: List) -> float:
+        """Calculate threshold for considering text blocks on the same line"""
+        heights = [abs(box[0][3][1] - box[0][0][1]) for box in results]
+        avg_height = sum(heights) / len(heights) if heights else 0
+        return avg_height * 0.5
+
+    def _get_block_y_position(self, block) -> float:
+        """Get the top Y position of a text block"""
+        return min(p[1] for p in block[0])
+
+    def _get_block_x_position(self, block) -> float:
+        """Get the left X position of a text block"""
+        return min(p[0] for p in block[0])
+
+    def _sort_line_by_x_position(self, line: List) -> List:
+        """Sort text blocks in a line by X position"""
+        return sorted(line, key=self._get_block_x_position)
+
+    def _should_add_to_current_line(self, top_y: float, last_y: float, threshold: float) -> bool:
+        """Determine if a block should be added to the current line"""
+        return last_y is None or abs(top_y - last_y) <= threshold
+
+    def _group_text_blocks(self, results: List) -> List[List]:
+        """Group text blocks into lines based on vertical position"""
+        if not results:
+            return []
+
+        # Calculate line height threshold
+        line_threshold = self._calculate_line_threshold(results)
+        
+        # Sort blocks by vertical position
+        sorted_by_y = sorted(results, key=self._get_block_y_position)
+        
+        lines = []
+        current_line = []
+        last_y = None
+        
+        # Group blocks into lines
+        for block in sorted_by_y:
+            top_y = self._get_block_y_position(block)
+            
+            if self._should_add_to_current_line(top_y, last_y, line_threshold):
+                current_line.append(block)
+            else:
+                if current_line:
+                    lines.append(self._sort_line_by_x_position(current_line))
+                current_line = [block]
+            last_y = top_y
+        
+        # Add the last line if it exists
+        if current_line:
+            lines.append(self._sort_line_by_x_position(current_line))
+            
+        return lines
+
+    async def _perform_windows_ocr(self, image: Image.Image, source_lang: str) -> str:
+        """Perform OCR using Windows OCR"""
+        result = await winocr.recognize_pil(image, 'en' if source_lang == 'auto' else source_lang)
+        if result and hasattr(result, 'text'):
+            return self._fix_ocr_errors(result.text.strip())
+        return ""
+
+    def _perform_tesseract_ocr(self, image: Image.Image) -> str:
+        """Perform OCR using Tesseract"""
+        self.ensure_tesseract()
+        text = pytesseract.image_to_string(image).strip()
+        return self._fix_ocr_errors(text)
+
     def _fix_ocr_errors(self, text: str) -> str:
         """Fix common OCR errors in the text."""
         # Common replacements

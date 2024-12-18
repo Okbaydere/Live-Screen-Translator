@@ -12,27 +12,44 @@ class ShortcutController:
         self._shortcuts: Dict[str, Tuple[Callable, str]] = {}  # keyboard_format -> (handler, tkinter_format)
         self._global_shortcuts_enabled = self.config_model.get_config('shortcuts', 'enabled', True)
         
+    def _parse_tkinter_format(self, tkinter_format: str) -> str:
+        """Extract key combination from Tkinter format"""
+        if not (tkinter_format.startswith('<') and tkinter_format.endswith('>')):
+            return tkinter_format
+        return tkinter_format[1:-1]  # Remove < and > brackets
+
+    def _convert_modifier_keys(self, key_parts: list) -> list:
+        """Convert modifier keys to keyboard library format"""
+        modifier_map = {
+            'control': 'ctrl'
+        }
+        return [modifier_map.get(part.lower(), part.lower()) for part in key_parts]
+
+    def _convert_special_keys(self, key_parts: list) -> list:
+        """Convert special keys to keyboard library format"""
+        special_keys = {
+            'space': 'space',
+            'r': 'r',
+            't': 't',
+            'o': 'o',
+            'h': 'h'
+        }
+        return [special_keys.get(part.lower(), part) for part in key_parts]
+
     def _convert_shortcut_format(self, tkinter_format: str) -> str:
         """Convert Tkinter shortcut format to keyboard library format"""
-        if tkinter_format.startswith('<') and tkinter_format.endswith('>'):
-            # Remove < and > brackets
-            key = tkinter_format[1:-1]
-            # Split into modifier and key
-            parts = key.split('-')
-            # Convert Control to ctrl
-            parts = ['ctrl' if part.lower() == 'control' else part.lower() for part in parts]
-            # Handle special keys
-            parts = [
-                'space' if part.lower() == 'space' else
-                'r' if part.lower() == 'r' else
-                't' if part.lower() == 't' else
-                'o' if part.lower() == 'o' else
-                'h' if part.lower() == 'h' else
-                part for part in parts
-            ]
-            # Join with + for keyboard library format
-            return '+'.join(parts)
-        return tkinter_format
+        # Parse Tkinter format
+        key = self._parse_tkinter_format(tkinter_format)
+        if key == tkinter_format:  # No conversion needed
+            return key
+            
+        # Split into parts and convert
+        parts = key.split('-')
+        parts = self._convert_modifier_keys(parts)
+        parts = self._convert_special_keys(parts)
+        
+        # Join with + for keyboard library format
+        return '+'.join(parts)
         
     def set_shortcut_handler(self, tkinter_format: str, handler: Callable):
         """Register a shortcut handler"""
