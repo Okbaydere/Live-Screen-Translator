@@ -10,9 +10,13 @@ import torch
 import winocr
 from dotenv import load_dotenv
 from PIL import Image
+from cachetools import TTLCache
 
 # Load environment variables
 load_dotenv()
+
+# Başlangıçta loglama konfigürasyonu
+logging.basicConfig(level=logging.ERROR)
 
 
 class OCRModel:
@@ -74,8 +78,7 @@ class OCRManager:
     def __init__(self):
         self._reader = None
         self._tesseract_initialized = False
-        self._cached_results = {}  # Last OCR results
-        self._cache_timeout = 5  # 5 second cache timeout
+        self._cache = TTLCache(maxsize=100, ttl=5)
 
         tesseract_path = os.getenv("TESSERACT_PATH")
         if tesseract_path:
@@ -98,8 +101,7 @@ class OCRManager:
                     gpu=(device == "cuda"),
                     model_storage_directory="model_storage",
                     download_enabled=True,
-                    verbose=False,
-                    quantize=True,  # Reduce memory usage
+                    verbose=False,  # Reduce memory usage
                 )
 
             except Exception as e:
@@ -110,8 +112,11 @@ class OCRManager:
 
     def ensure_tesseract(self):
         if not self._tesseract_initialized:
-            pytesseract.get_tesseract_version()
-            self._tesseract_initialized = True
+            try:
+                pytesseract.get_tesseract_version()
+                self._tesseract_initialized = True
+            except Exception as e:
+                logging.error(f"Tesseract initialization error: {e}")
 
     async def process_image(
         self, image: Image.Image, method: str, source_lang: str = "auto"
@@ -122,16 +127,15 @@ class OCRManager:
 
             # If in cache and not expired, return from cache
             cache_key = (image_hash, method, source_lang)
-            if cache_key in self._cached_results:
-                cached_time, cached_result = self._cached_results[cache_key]
-                if time.time() - cached_time < self._cache_timeout:
-                    return cached_result
+            if cache_key in self._cache:
+                cached_result = self._cache[cache_key]
+                return cached_result
 
             # Perform OCR
             result = await self._perform_ocr(image, method, source_lang)
 
             # Cache the result
-            self._cached_results[cache_key] = (time.time(), result)
+            self._cache[cache_key] = result
             return result
 
         except Exception as e:
@@ -148,7 +152,7 @@ class OCRManager:
             elif method == "Windows OCR":
                 return await self._perform_windows_ocr(image, source_lang)
             else:
-                return self._perform_tesseract_ocr(image)
+                return self._perform_tesseract_ocr(image, source_lang)
         except Exception as e:
             logging.error(f"{method} OCR error: {e}")
             return ""
@@ -251,11 +255,17 @@ class OCRManager:
             return self._fix_ocr_errors(result.text.strip())
         return ""
 
-    def _perform_tesseract_ocr(self, image: Image.Image) -> str:
-        """Perform OCR using Tesseract"""
-        self.ensure_tesseract()
-        text = pytesseract.image_to_string(image).strip()
-        return self._fix_ocr_errors(text)
+    def _perform_tesseract_ocr(
+        self, image: Image.Image, source_lang: str
+    ) -> str:
+        try:
+            self.ensure_tesseract()
+            lang = "eng" if source_lang == "auto" else source_lang
+            text = pytesseract.image_to_string(image, lang=lang).strip()
+            return self._fix_ocr_errors(text)
+        except Exception as e:
+            logging.error(f"Tesseract OCR error: {e}")
+            return ""
 
     @staticmethod
     def _fix_ocr_errors(text: str) -> str:
@@ -284,3 +294,34 @@ class OCRManager:
             fixed_sentences.append(sentence)
 
         return ". ".join(fixed_sentences)
+
+    def _initialize_easyocr_reader(self):
+        """Initializes EasyOCR reader with configurations."""
+        try:
+            # Suppress warnings
+            import warnings
+            warnings.filterwarnings("ignore")
+
+            # Initialize with LSTM batch first
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            torch.backends.cudnn.enabled = False  # Disable CUDNN
+
+            self._reader = easyocr.Reader(
+                ["en", "tr"],
+                gpu=(device == "cuda"),
+                model_storage_directory="model_storage",
+                download_enabled=True,
+                verbose=False,
+                quantize=True,  # Reduce memory usage
+            )
+
+        except Exception as e:
+            logging.error(f"EasyOCR initialization error: {e}")
+            self._reader = None
+
+    def _get_easyocr_reader(self):
+        return self._reader
+
+    def _set_easyocr_reader(self, reader):
+        self._reader = reader
+
