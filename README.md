@@ -96,11 +96,12 @@ Real-time screen text translator with OCR. Capture and translate text from any a
 
 The application settings can be configured through the UI or by editing `config.json`:
 
-- Theme mode (dark/light)
 - Translation window opacity
 - Default languages
 - Preferred OCR and translation engines
 - Global shortcuts enable/disable
+- Game mode
+- Always on top
 
 ## 🔍 Troubleshooting
 

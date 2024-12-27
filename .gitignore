@@ -34,3 +34,7 @@ config.json
 model_storage/
 *.log 
 translation_history.json
+test.png
+metin.png
+test_image.png
+
