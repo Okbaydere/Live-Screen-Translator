@@ -9,7 +9,7 @@ import pytesseract
 import torch
 import winocr
 from dotenv import load_dotenv
-from PIL import Image
+from PIL import Image, ImageEnhance
 from cachetools import TTLCache
 
 # Load environment variables
@@ -38,12 +38,12 @@ class OCRModel:
             observer()
 
     async def process_image(
-        self, image: Image.Image, lang: str = "auto"
+        self, image: Image.Image, lang: str = "auto", subtitle_mode: bool = True
     ) -> Optional[str]:
         """Process image using current OCR engine"""
         try:
             return await self._ocr_manager.process_image(
-                image, self._current_engine, lang
+                image, self._current_engine, lang, subtitle_mode
             )
         except Exception as e:
             logging.error(f"OCR processing error: {e}")
@@ -119,28 +119,66 @@ class OCRManager:
                 logging.error(f"Tesseract initialization error: {e}")
 
     async def process_image(
-        self, image: Image.Image, method: str, source_lang: str = "auto"
+        self, image: Image.Image, method: str, source_lang: str = "auto", subtitle_mode: bool = True
     ) -> str:
         try:
-            # Create image hash
-            image_hash = hash(image.tobytes())
-
-            # If in cache and not expired, return from cache
+            # Create image hash for caching
+            image_hash = hash((image.tobytes(), subtitle_mode))
             cache_key = (image_hash, method, source_lang)
+
             if cache_key in self._cache:
-                cached_result = self._cache[cache_key]
-                return cached_result
+                return self._cache[cache_key]
+
+            # Preprocess image for subtitles conditionally
+            processed_image = self._preprocess_image_for_subtitles(image, subtitle_mode)
 
             # Perform OCR
-            result = await self._perform_ocr(image, method, source_lang)
+            result = await self._perform_ocr(processed_image, method, source_lang)
 
-            # Cache the result
             self._cache[cache_key] = result
             return result
 
         except Exception as e:
             logging.error(f"OCR error ({method}): {e}")
             return ""
+
+    def _preprocess_image_for_subtitles(self, image: Image.Image, subtitle_mode: bool) -> Image.Image:
+        """Preprocess the image to better detect subtitles."""
+        if not subtitle_mode:
+            return image  # No preprocessing for full screen OCR
+
+        try:
+            # Convert to grayscale
+            grayscale_image = image.convert("L")
+            
+            # Enhance contrast with more conservative values
+            enhancer = ImageEnhance.Contrast(grayscale_image)
+            enhanced_image = enhancer.enhance(1.5)  # Reduced from 2.0 to 1.5
+            
+            # Apply adaptive thresholding instead of fixed threshold
+            threshold = self._calculate_adaptive_threshold(enhanced_image)
+            binary_image = enhanced_image.point(lambda p: 255 if p > threshold else 0)
+            
+            return binary_image
+            
+        except Exception as e:
+            logging.error(f"Error preprocessing image: {e}")
+            return image  # Return original image if preprocessing fails
+
+    def _calculate_adaptive_threshold(self, image: Image.Image) -> int:
+        """Calculate adaptive threshold based on image content"""
+        # Convert image to numpy array for calculations
+        img_array = np.array(image)
+        
+        # Calculate mean and standard deviation
+        mean = np.mean(img_array)
+        std = np.std(img_array)
+        
+        # Adaptive threshold based on image statistics
+        threshold = mean + 0.5 * std
+        
+        # Ensure threshold is within valid range
+        return int(max(min(threshold, 200), 100))
 
     async def _perform_ocr(
         self, image: Image.Image, method: str, source_lang: str
@@ -168,14 +206,36 @@ class OCRManager:
 
     @staticmethod
     def _process_easyocr_results(results: List) -> str:
-        """Process EasyOCR results into text"""
+        """Process EasyOCR results into text, preserving line breaks."""
         if not results:
             return ""
 
-        lines = OCRManager._group_text_blocks(results)
-        text_lines = [" ".join(block[1] for block in line) for line in lines]
-        text = " ".join(text_lines)
-        return OCRManager._fix_ocr_errors(text)
+        # Sort results by y-coordinate
+        results.sort(key=lambda x: x[0][0][1])
+
+        lines = []
+        current_line = ""
+        last_y_center = -1
+
+        for bbox, text, confidence in results:
+            y_centers = [coord[1] for coord in bbox]
+            current_y_center = sum(y_centers) / len(y_centers)
+            text = text.strip()
+
+            if not current_line:
+                current_line += text
+                last_y_center = current_y_center
+            elif abs(current_y_center - last_y_center) < 10:
+                current_line += " " + text
+            else:
+                lines.append(current_line)
+                current_line = text
+                last_y_center = current_y_center
+
+        if current_line:
+            lines.append(current_line)
+
+        return "\n".join(lines)
 
     @staticmethod
     def _calculate_line_threshold(results: List) -> float:
@@ -261,7 +321,19 @@ class OCRManager:
         try:
             self.ensure_tesseract()
             lang = "eng" if source_lang == "auto" else source_lang
-            text = pytesseract.image_to_string(image, lang=lang).strip()
+            
+            # Use PSM 3 for automatic page segmentation
+            # PSM modes:
+            # 3 = Fully automatic page segmentation, but no OSD (default)
+            # 6 = Assume a uniform block of text
+            config = r'--psm 3 --oem 1'
+            
+            text = pytesseract.image_to_string(
+                image,
+                lang=lang,
+                config=config
+            ).strip()
+            
             return self._fix_ocr_errors(text)
         except Exception as e:
             logging.error(f"Tesseract OCR error: {e}")
@@ -270,20 +342,7 @@ class OCRManager:
     @staticmethod
     def _fix_ocr_errors(text: str) -> str:
         """Fix common OCR errors in the text."""
-        # Common replacements
-        replacements = {
-            "1 ": "I ",  # Fix common "1" instead of "I" error
-            " 1 ": " I ",  # Fix "1" surrounded by spaces
-            " i ": " I ",  # Fix lowercase "i" as standalone pronoun
-            " im ": " I'm ",  # Fix common "im" error
-            " ill ": " I'll ",  # Fix common "ill" error
-            " ive ": " I've ",  # Fix common "ive" error
-            " id ": " I'd ",  # Fix common "id" error
-        }
-
-        # Apply all replacements
-        for old, new in replacements.items():
-            text = text.replace(old, new)
+       
 
         # Fix sentence starts
         sentences = text.split(". ")
@@ -324,4 +383,7 @@ class OCRManager:
 
     def _set_easyocr_reader(self, reader):
         self._reader = reader
+
+
+
 
